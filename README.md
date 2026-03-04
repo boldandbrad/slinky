@@ -2,7 +2,8 @@
 
 **A simple symlink-based dotfile manager.**
 
-Move dotfiles to a central repo, track them with a map file, and replace originals with symlinks.
+Move dotfiles to a central repo, track them with a map file, and replace
+originals with symlinks. That's it.
 
 ## Install
 
