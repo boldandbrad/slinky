@@ -2,6 +2,8 @@
 
 # slinky: simple dotfile symlink management
 
+VERSION="0.1.0"
+
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 if [ ! -d "$DOTFILES" ]; then
   echo "Error: DOTFILES ('$DOTFILES') is not a directory or cannot be accessed." >&2
@@ -40,6 +42,7 @@ Commands:
   list [-p|--path <path>]             List tracked dotfiles
   uninstall                           Uninstall tracked symlinks
   help|-h|--help                      Show this help
+  --version|-v                        Show version
 EOF
 }
 
@@ -301,6 +304,9 @@ case "$1" in
     ;;
   help|"-h"|"--help")
     help
+    ;;
+  --version|-v)
+    echo "slinky version $VERSION"
     ;;
   *)
     help
