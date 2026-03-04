@@ -7,7 +7,12 @@ if [ ! -d "$DOTFILES" ]; then
   echo "Error: DOTFILES ('$DOTFILES') is not a directory or cannot be accessed." >&2
   exit 1
 fi
+
 MAPPINGS_FILE="$DOTFILES/slinky.map"
+[ -f "$MAPPINGS_FILE" ] || {
+  printf "# slinky.map - symlinks managed by slinky\n" > "$MAPPINGS_FILE";
+  echo "Created '$MAPPINGS_FILE'"
+}
 
 tilde_expand() {
   v="$1"
@@ -32,18 +37,10 @@ Commands:
   install                      Install dotfile symlinks tracked in slinky.map
   drop <repo_rel_path>         Drop a file or directory from dotfiles and slinky.map, returning it to its original location
   find                         Find active symlinks pointing to this repository
-  init                         Create bare slinky.map file if it does not exist
   list                         List symlinks tracked in slinky.map
   uninstall                    Uninstall dotfile symlinks tracked in slinky.map by deleting them
   help|-h|--help               Show this help
 EOF
-}
-
-init() {
-  [ -f "$MAPPINGS_FILE" ] || {
-    printf "# slinky.map - symlinks managed by slinky\n" > "$MAPPINGS_FILE";
-    echo "Created '$MAPPINGS_FILE'"
-  }
 }
 
 add_link() {
@@ -188,10 +185,6 @@ list_links() {
   done < "$MAPPINGS_FILE"
 }
 
-if [ ! -f "$MAPPINGS_FILE" ]; then
-  echo "'$MAPPINGS_FILE' not found. Create it with 'slinky init'" >&2; exit 1
-fi
-
 case "$1" in
   add)
     shift
@@ -216,9 +209,6 @@ case "$1" in
     ;;
   find)
     find_links
-    ;;
-  init)
-    init
     ;;
   list)
     list_links
