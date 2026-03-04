@@ -78,7 +78,7 @@ slinky uninstall                        # remove all managed symlinks
 ## slinky.map
 
 Slinky automatically manages a map file that tracks where each dotfile lives in
-your repo and where its symlink should point:
+your repo and where its symlink should exist:
 
 ```txt
 vimrc|~/.vimrc
