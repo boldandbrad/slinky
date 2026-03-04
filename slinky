@@ -33,13 +33,13 @@ help() {
 slinky - dotfile symlink management
 Usage: slinky <command> [args]
 Commands:
-  add [-p|--path <repo_rel_path>] <src>...    Add one or more files/directories to dotfiles
-  install [-p|--path <repo_rel_path>]         Install dotfile symlinks tracked in slinky.map
-  drop <repo_rel_path>                        Drop a file or directory from dotfiles and slinky.map, returning it to its original location
-  find                                        Find active symlinks pointing to this repository
-  list [-p|--path <repo_rel_path>]            List symlinks tracked in slinky.map
-  uninstall                                   Uninstall dotfile symlinks tracked in slinky.map by deleting them
-  help|-h|--help                              Show this help
+  add [-p|--path <path>] <src>...     Add one or more files/directories to dotfiles
+  install [-p|--path <path>]          Install symlinks for tracked dotfiles
+  drop <repo_rel_path>...             Drop one or more files/directories back to original locations
+  find                                Find symlinks pointing to the dotfiles repo
+  list [-p|--path <path>]             List tracked dotfiles
+  uninstall                           Uninstall tracked symlinks
+  help|-h|--help                      Show this help
 EOF
 }
 
@@ -260,7 +260,9 @@ case "$1" in
   drop)
     shift
     if [ $# -ge 1 ]; then
-      drop_link "$1"
+      for repo_rel_path in "$@"; do
+        drop_link "$repo_rel_path"
+      done
     else
       help
     fi
