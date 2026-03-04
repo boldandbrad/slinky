@@ -2,7 +2,7 @@
 
 # slinky: simple dotfile symlink management
 
-DOTFILES="${DOTFILES:?Slinky requires the DOTFILES environment variable is set to the path of your dotfiles repository}"
+DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 if [ ! -d "$DOTFILES" ]; then
   echo "Error: DOTFILES ('$DOTFILES') is not a directory or cannot be accessed." >&2
   exit 1
