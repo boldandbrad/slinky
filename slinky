@@ -33,13 +33,13 @@ help() {
 slinky - dotfile symlink management
 Usage: slinky <command> [args]
 Commands:
-  add [-p|--path <path>] <src>  Add a file or directory to dotfiles, symlink it, and track it in slinky.map
-  install                       Install dotfile symlinks tracked in slinky.map
-  drop <repo_rel_path>          Drop a file or directory from dotfiles and slinky.map, returning it to its original location
-  find                          Find active symlinks pointing to this repository
-  list                          List symlinks tracked in slinky.map
-  uninstall                     Uninstall dotfile symlinks tracked in slinky.map by deleting them
-  help|-h|--help                Show this help
+  add [-p|--path <repo_rel_path>] <src>...    Add one or more files/directories to dotfiles
+  install [-p|--path <repo_rel_path>]         Install dotfile symlinks tracked in slinky.map
+  drop <repo_rel_path>                        Drop a file or directory from dotfiles and slinky.map, returning it to its original location
+  find                                        Find active symlinks pointing to this repository
+  list [-p|--path <repo_rel_path>]            List symlinks tracked in slinky.map
+  uninstall                                   Uninstall dotfile symlinks tracked in slinky.map by deleting them
+  help|-h|--help                              Show this help
 EOF
 }
 
@@ -99,6 +99,7 @@ add_link() {
 }
 
 install_links() {
+  filter_path="$1"
   echo "Installing dotfile symlinks from '$MAPPINGS_FILE'"
 
   while IFS= read -r line; do
@@ -108,6 +109,15 @@ install_links() {
 
     src=$(printf '%s' "$line" | cut -d'|' -f1)
     tgt=$(printf '%s' "$line" | cut -d'|' -f2-)
+
+    if [ -n "$filter_path" ]; then
+      case "$src" in
+        "$filter_path"/*) ;;
+        "$filter_path") ;;
+        *) continue ;;
+      esac
+    fi
+
     abs_src="$DOTFILES/$src"
     abs_tgt="$(tilde_expand "$tgt")"
     if [ ! -e "$abs_src" ]; then
@@ -175,12 +185,22 @@ find_links() {
 }
 
 list_links() {
+  filter_path="$1"
   while IFS= read -r line; do
     case "$line" in
       ''|'#'*) continue ;;
     esac
     src=$(printf '%s' "$line" | cut -d'|' -f1)
     tgt=$(printf '%s' "$line" | cut -d'|' -f2-)
+
+    if [ -n "$filter_path" ]; then
+      case "$src" in
+        "$filter_path"/*) ;;
+        "$filter_path") ;;
+        *) continue ;;
+      esac
+    fi
+
     printf "%s -> %s\n" "$src" "$tgt"
   done < "$MAPPINGS_FILE"
 }
@@ -189,7 +209,6 @@ case "$1" in
   add)
     shift
     repo_rel_path=""
-    input_path=""
     while [ $# -gt 0 ]; do
       case "$1" in
         -p|--path)
@@ -206,19 +225,37 @@ case "$1" in
           exit 1
           ;;
         *)
-          input_path="$1"
+          add_link "$1" "$repo_rel_path"
           shift
           ;;
       esac
     done
-    if [ -n "$input_path" ]; then
-      add_link "$input_path" "$repo_rel_path"
-    else
-      help
-    fi
     ;;
   install)
-    install_links
+    shift
+    filter_path=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -p|--path)
+          if [ -n "$2" ] && [ "${2#-}" = "$2" ]; then
+            filter_path="$2"
+            shift 2
+          else
+            echo "Error: -p/--path requires a path argument" >&2
+            exit 1
+          fi
+          ;;
+        -*)
+          echo "Error: Unknown option '$1'" >&2
+          exit 1
+          ;;
+        *)
+          echo "Error: Unknown argument '$1'" >&2
+          exit 1
+          ;;
+      esac
+    done
+    install_links "$filter_path"
     ;;
   drop)
     shift
@@ -232,7 +269,30 @@ case "$1" in
     find_links
     ;;
   list)
-    list_links
+    shift
+    filter_path=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -p|--path)
+          if [ -n "$2" ] && [ "${2#-}" = "$2" ]; then
+            filter_path="$2"
+            shift 2
+          else
+            echo "Error: -p/--path requires a path argument" >&2
+            exit 1
+          fi
+          ;;
+        -*)
+          echo "Error: Unknown option '$1'" >&2
+          exit 1
+          ;;
+        *)
+          echo "Error: Unknown argument '$1'" >&2
+          exit 1
+          ;;
+      esac
+    done
+    list_links "$filter_path"
     ;;
   uninstall)
     uninstall_links
