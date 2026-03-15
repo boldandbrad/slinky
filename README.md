@@ -1,32 +1,69 @@
 # 🌀 slinky
 
-**A simple symlink-based dotfile manager.**
+**A spring-loaded symlink-based dotfile manager built in shell.**
 
-Move dotfiles to a central repo, track them with a map file, and replace
-originals with symlinks. That's it.
+Move dotfiles to a central repo, replace originals with symlinks, and keep track
+of them for easy install. That's it.
+
+## Why use slinky?
+
+- ✨ Simple: One command to add, install, drop, or uninstall dotfiles.
+- 🔒 Safe: Won't overwrite existing files without confirmation.
+- 📜 Git-friendly: Just a folder and a map file - works with any VCS.
+- 🗂️ Flexible: Organize files however you want - by host, OS, or category.
+- 🔧 No config: Just works with your dotfiles repo.
+- 🐚 Portable: Single POSIX shell script with zero dependencies.
 
 ## Install
 
+Slinky supports any system that ships with a POSIX-compliant shell.
+
+### Package manager
+
 ```sh
-brew tap boldandbrad/tap
-brew install slinky
+brew install boldandbrad/tap/slinky
 ```
 
-Or download the [script](./slinky) and add it to your path.
+> If this project gains traction I may add slinky to other package managers in
+> the future.
 
-## How it Works
+### Manual
 
-Slinky moves your dotfiles into a central repository (`$DOTFILES`, defaults to
-`$HOME/dotfiles`), automatically tracks them in `slinky.map`, and replaces the
-originals with symlinks.
+Add slinky as a submodule.
+
+```sh
+git submodule add https://github.com/boldandbrad/slinky
+```
+
+Or simply download the [script](./slinky) and add it to your path. You can even
+store it directly in your dotfiles repository!
+
+## How it works
+
+Slinky moves your dotfiles into a central repository, places symlinks in their
+original locations, and remembers what is has done. You can think of it as a
+light wrapper around `mv` and `ln` that can do tricks.
 
 ```txt
 ~/.vimrc                                # Before: regular file
 ~/.vimrc → ~/dotfiles/vimrc             # After: symlink
 ```
 
-This lets you commit your dotfiles to version control and symlink them on any
-machine.
+By default, slinky assumes your dotfiles repository is located at
+`$HOME/dotfiles`, but you can change this behavior by setting the `$DOTFILES`
+environment variable.
+
+Slinky maintains a plaintext map file (`slinky.map`) in the root of the dotfiles
+repository to keep track the files and directoires it manages. Example:
+
+```txt
+vimrc|~/.vimrc
+config/nvim|~/.config/nvim
+emacs|~/.emacs
+```
+
+Combined, these patterns let you backup your dotfiles using your preferred
+version control or cloud storage system for easy install on any machine.
 
 ## Usage
 
@@ -35,7 +72,7 @@ machine.
 ```sh
 slinky add ~/.vimrc                     # add to dotfiles root
 slinky add ~/.vimrc ~/.bashrc           # add multiple at once
-slinky add -p editors ~/.config/nvim    # specify subdirectory
+slinky add -p editors ~/.config/nvim    # specify repo subdirectory
 slinky add ~/.vimrc -p editors          # flag can appear anywhere
 ```
 
@@ -43,7 +80,7 @@ slinky add ~/.vimrc -p editors          # flag can appear anywhere
 
 ```sh
 slinky list                             # list all tracked dotfiles
-slinky list -p mac                      # list only those under a subdirectory
+slinky list -p mac                      # only those under the given subdirectory
 ```
 
 ### Find
@@ -58,8 +95,8 @@ that weren't added through slinky.
 ### Install
 
 ```sh
-slinky install                          # create all symlinks
-slinky install -p mac                   # only symlinks under a subdirectory
+slinky install                          # create symlinks for all tracked dotfiles
+slinky install -p mac                   # only dotfiles under the given subdirectory
 ```
 
 ### Drop
@@ -75,28 +112,10 @@ slinky drop config/nvim .vimrc          # drop multiple at once
 slinky uninstall                        # remove all managed symlinks
 ```
 
-## slinky.map
+## Example repos
 
-Slinky automatically manages a map file that tracks where each dotfile lives in
-your repo and where its symlink should exist:
-
-```txt
-vimrc|~/.vimrc
-config/nvim|~/.config/nvim
-emacs|~/.emacs
-```
-
-Changes to slinky.map should be committed to version control alongside your
-dotfiles.
-
-## Why use slinky?
-
-- ✨ Simple: One command to add, install, drop, or uninstall dotfiles.
-- 🔒 Safe: Won't overwrite existing files without confirmation.
-- 📜 Git-friendly: Just a folder and a map file - works with any VCS.
-- 🗂️ Flexible: Organize files however you want - by host, OS, or category.
-- 🔧 No config: Just works with your dotfiles repo.
-- 🐚 Portable: Single POSIX shell script with zero dependencies.
+Check out [slinky in the wild](https://github.com/topics/slinky-dotfiles). Add
+your dotfiles github repo to the list by adding the `slinky-dotfiles` topic.
 
 ## Inspiration
 
