@@ -54,7 +54,7 @@ By default, slinky assumes your dotfiles repository is located at
 environment variable.
 
 Slinky maintains a plaintext map file (`slinky.map`) in the root of the dotfiles
-repository to keep track the files and directoires it manages. Example:
+repository to keep track of the files and directories it manages. Example:
 
 ```txt
 vimrc|~/.vimrc
