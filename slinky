@@ -10,9 +10,9 @@ if [ ! -d "$DOTFILES" ]; then
   exit 1
 fi
 
-MAPPINGS_FILE="$DOTFILES/slinky.map"
+MAPPINGS_FILE="$DOTFILES/slinky.psv"
 [ -f "$MAPPINGS_FILE" ] || {
-  printf "# slinky.map - symlinks managed by slinky\n" > "$MAPPINGS_FILE";
+  echo "" > "$MAPPINGS_FILE";
   echo "Created '$MAPPINGS_FILE'"
 }
 
@@ -151,7 +151,7 @@ uninstall_links() {
     fi
   done < "$MAPPINGS_FILE"
 
-  echo "Uninstalled dotfile symlinks tracked in slinky.map by deleting them"
+  echo "Uninstalled dotfile symlinks tracked in $MAPPINGS_FILE by deleting them"
 }
 
 drop_link() {
