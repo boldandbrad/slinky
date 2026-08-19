@@ -9,7 +9,7 @@ of them for easy install. That's it.
 
 - ✨ Simple: One command to add, install, drop, or uninstall dotfiles.
 - 🔒 Safe: Won't overwrite existing files without confirmation.
-- 📜 Git-friendly: Just a folder and a map file - works with any VCS.
+- 📜 Git-friendly: Just a script and a map file - works with any VCS.
 - 🗂️ Flexible: Organize files however you want - by host, OS, or category.
 - 🔧 No config: Just works with your dotfiles repo.
 - 🐚 Portable: Single POSIX shell script with zero dependencies.
@@ -53,8 +53,8 @@ By default, slinky assumes your dotfiles repository is located at
 `$HOME/dotfiles`, but you can change this behavior by setting the `$DOTFILES`
 environment variable.
 
-Slinky maintains a plaintext map file (`slinky.map`) in the root of the dotfiles
-repository to keep track of the files and directories it manages. Example:
+Slinky maintains a simple pipe-separated value file (`slinky.psv`) in the
+dotfiles repository root to track the files and directories it manages. Example:
 
 ```txt
 vimrc|~/.vimrc
