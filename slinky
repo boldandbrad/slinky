@@ -2,7 +2,7 @@
 
 # slinky: simple dotfile symlink management
 
-VERSION="0.1.0"
+VERSION="0.2.0-dev"
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 if [ ! -d "$DOTFILES" ]; then
@@ -37,6 +37,7 @@ Usage: slinky <command> [args]
 Commands:
   add [-p|--path <path>] <src>...     Add one or more files/directories to dotfiles
   install [-p|--path <path>]          Install symlinks for tracked dotfiles
+  move <repo_rel_src> <repo_rel_tgt>  Move a tracked dotfile within the repo and update its symlink
   drop <repo_rel_path>...             Drop one or more files/directories back to original locations
   find                                Find symlinks pointing to the dotfiles repo
   list [-p|--path <path>]             List tracked dotfiles
@@ -99,6 +100,42 @@ add_link() {
   printf "%s\n" "$mapping_entry" >> "$MAPPINGS_FILE"
 
   echo "Added dotfile '$dest_path' via symlink at '$source_path'"
+}
+
+move_link() {
+  source_path="$1"
+  dest_path="$2"
+  source_abs_path="$DOTFILES/$source_path"
+  dest_abs_path="$DOTFILES/$dest_path"
+
+  if [ ! -e "$source_abs_path" ]; then
+    echo "Cannot move '$source_abs_path': it does not exist" >&2; return
+  fi
+
+  mapping=$(awk -v s="$source_path" -F'|' '$1 == s { print; exit }' "$MAPPINGS_FILE")
+  if [ -z "$mapping" ]; then
+    echo "Cannot move dotfile '$source_path': no mapping found in '$MAPPINGS_FILE'." >&2; return
+  fi
+  link_path=$(printf '%s' "$mapping" | cut -d'|' -f2-)
+  link_abs_path="$(tilde_expand "$link_path")"
+
+  if [ -e "$dest_abs_path" ]; then
+    echo "Cannot move '$source_abs_path' to '$dest_abs_path': it already exists" >&2; return
+  fi
+
+  mv "$source_abs_path" "$dest_abs_path"
+
+  if [ -L "$link_abs_path" ]; then
+    rm "$link_abs_path"
+  fi
+  ln -sn "$dest_abs_path" "$link_abs_path"
+
+  tmp=$(mktemp)
+  awk -v s="$source_path" -F'|' '$1 != s { print }' "$MAPPINGS_FILE" > "$tmp" && mv "$tmp" "$MAPPINGS_FILE"
+  mapping_entry="$dest_path|$link_path"
+  printf "%s\n" "$mapping_entry" >> "$MAPPINGS_FILE"
+
+  echo "Moved dotfile '$source_path' to '$dest_path' and updated symlink"
 }
 
 install_links() {
@@ -165,7 +202,7 @@ drop_link() {
   tgt=$(printf '%s' "$line" | cut -d'|' -f2-)
 
   abs_src="$DOTFILES/$src"
-    abs_tgt="$(tilde_expand "$tgt")"
+  abs_tgt="$(tilde_expand "$tgt")"
 
   if [ -L "$abs_tgt" ] || [ -e "$abs_tgt" ]; then
     rm -f "$abs_tgt" 2>/dev/null
@@ -259,6 +296,14 @@ case "$1" in
       esac
     done
     install_links "$filter_path"
+    ;;
+  move)
+    shift
+    if [ $# -eq 2 ]; then
+      move_link "$1" "$2"
+    else
+      help
+    fi
     ;;
   drop)
     shift
