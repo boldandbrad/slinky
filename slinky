@@ -2,7 +2,7 @@
 
 # slinky: simple dotfile symlink management
 
-VERSION="0.2.0-dev"
+VERSION="0.2.0"
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 if [ ! -d "$DOTFILES" ]; then
