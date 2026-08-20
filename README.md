@@ -83,6 +83,12 @@ slinky list                             # list all tracked dotfiles
 slinky list -p mac                      # only those under the given subdirectory
 ```
 
+### Move
+
+```sh
+slinky move editors/nvim config/nvim    # move a tracked dotfile within the repo and update its symlink
+```
+
 ### Find
 
 ```sh
