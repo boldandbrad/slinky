@@ -65,6 +65,54 @@ emacs|~/.emacs
 Combined, these patterns let you backup your dotfiles using your preferred
 version control or cloud storage system for easy install on any machine.
 
+## Getting started
+
+These guides assume you have already [installed](#install) slinky, are familiar
+with [how it works](#how-it-works), and will use git to backup and sync your
+dotfiles.
+
+### Clean slate
+
+Follow this guide if you are new to managing dotfiles or are starting with a
+clean slate.
+
+1. Create an empty directory at `~/dotfiles`: `mkdir ~/dotfiles`
+2. Initialize a git repository in that directory: `cd ~/dotfiles && git init`
+3. Add your first dotfile: `slinky add ~/.vimrc`
+
+That's it! All that's left is to commit and push your changes to a remote repo,
+including the slinky.psv file.
+
+To install your dotfiles onto another computer, read
+[Syncing multiple computers](#syncing-multiple-computers).
+
+### Migrating to slinky
+
+Follow this guide if you have an existing symlink based dotfile repository and
+you'd like to migrate to slinky.
+
+1. Move your local repository to `~/dotfiles`, or set `$DOTFILES` to tell slinky
+where it is
+2. Find your existing symlinks: `slinky find`
+3. Import them: `slinky import symlink1 symlink2 ...`
+
+That's it! All that's left is to delete your previous dotfile manager.
+
+To install your dotfiles onto another computer, read
+[Syncing multiple computers](#syncing-multiple-computers).
+
+### Syncing multiple computers
+
+Follow this guide to easily keep your dotfiles in sync across multiple devices.
+
+1. Make sure slinky is [installed](#install) on each computer
+2. Clone your git repository, example:
+`git clone https://github.com/yourname/dotfiles.git ~/dotfiles`
+3. Backup any local dotfiles
+4. Install dotfile symlinks: `slinky install`
+
+That's it!
+
 ## Usage
 
 ### Add
