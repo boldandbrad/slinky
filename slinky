@@ -54,7 +54,7 @@ commands:
 EOF
 }
 
-add_link() {
+add_dotfiles() {
   input_path="$1"
   repo_rel_path="$2"
 
@@ -109,7 +109,7 @@ add_link() {
   echo "Added dotfile '$dest_path' via symlink at '$source_path'"
 }
 
-list_links() {
+list_dotfiles() {
   filter_path="$1"
   while IFS= read -r line; do
     case "$line" in
@@ -130,7 +130,7 @@ list_links() {
   done < "$MAPPINGS_FILE"
 }
 
-move_link() {
+move_dotfile() {
   source_path="$1"
   dest_path="$2"
   source_abs_path="$DOTFILES/$source_path"
@@ -166,7 +166,7 @@ move_link() {
   echo "Moved dotfile '$source_path' to '$dest_path' and updated symlink"
 }
 
-drop_link() {
+drop_dotfiles() {
   repo_rel_path="$1"
 
   line=$(awk -v s="$repo_rel_path" -F'|' '$1 == s { print; exit }' "$MAPPINGS_FILE")
@@ -303,7 +303,6 @@ install_links() {
 }
 
 uninstall_links() {
-  # Remove targets; then prune mappings file
   while IFS= read -r line; do
     case "$line" in ''|'#'* ) continue ;;
     esac
@@ -338,7 +337,7 @@ case "$1" in
           exit 1
           ;;
         *)
-          add_link "$1" "$repo_rel_path"
+          add_dotfiles "$1" "$repo_rel_path"
           shift
           ;;
       esac
@@ -368,12 +367,12 @@ case "$1" in
           ;;
       esac
     done
-    list_links "$filter_path"
+    list_dotfiles "$filter_path"
     ;;
   move)
     shift
     if [ $# -eq 2 ]; then
-      move_link "$1" "$2"
+      move_dotfile "$1" "$2"
     else
       help
     fi
@@ -382,7 +381,7 @@ case "$1" in
     shift
     if [ $# -ge 1 ]; then
       for repo_rel_path in "$@"; do
-        drop_link "$repo_rel_path"
+        drop_dotfiles "$repo_rel_path"
       done
     else
       help
