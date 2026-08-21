@@ -89,6 +89,13 @@ slinky list -p mac                      # only those under the given subdirector
 slinky move editors/nvim config/nvim    # move a tracked dotfile within the repo and update its symlink
 ```
 
+### Drop
+
+```sh
+slinky drop config/nvim                 # move back to original location
+slinky drop config/nvim .vimrc          # drop multiple at once
+```
+
 ### Find
 
 ```sh
@@ -96,18 +103,18 @@ slinky find                             # search the user's home directory for u
 slinky find ~/.config                   # search in the specified directory
 ```
 
+### Import
+
+```sh
+slinky import /path/to/symlink          # track an existing dotfile symlink
+slinky import symlink1 symlink2         # import multiple symlinks
+```
+
 ### Install
 
 ```sh
 slinky install                          # create symlinks for all tracked dotfiles
-slinky install -p mac                   # only dotfiles under the given subdirectory
-```
-
-### Drop
-
-```sh
-slinky drop config/nvim                 # move back to original location
-slinky drop config/nvim .vimrc          # drop multiple at once
+slinky install -p mac                   # only install dotfiles under the given subdirectory
 ```
 
 ### Uninstall
