@@ -81,10 +81,8 @@ clean slate.
 3. Add your first dotfile: `slinky add ~/.vimrc`
 
 That's it! All that's left is to commit and push your changes to a remote repo,
-including the slinky.psv file.
-
-To install your dotfiles onto another computer, read
-[Syncing multiple computers](#syncing-multiple-computers).
+including the `slinky.psv` file. To install your dotfiles onto another computer,
+read [Syncing multiple computers](#syncing-multiple-computers).
 
 ### Migrating to slinky
 
@@ -96,9 +94,8 @@ where it is
 2. Find your existing symlinks: `slinky find`
 3. Import them: `slinky import symlink1 symlink2 ...`
 
-That's it! All that's left is to delete your previous dotfile manager.
-
-To install your dotfiles onto another computer, read
+That's it! All that's left is to delete your previous dotfile manager. To
+install your dotfiles onto another computer, read
 [Syncing multiple computers](#syncing-multiple-computers).
 
 ### Syncing multiple computers
