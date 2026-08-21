@@ -37,15 +37,17 @@ usage: slinky <command> [args]
 commands:
   add [-p|--path <repo_rel_path>] <src>...    Add and track new files or
                                               directories to dotfiles
-  install [-p|--path <path>]                  Install symlinks for tracked
-                                              dotfiles
+  list [-p|--path <repo_rel_path>]            List tracked dotfiles
   move <repo_rel_src> <repo_rel_tgt>          Move a tracked dotfile within the
                                               repo and update its symlink
   drop <repo_rel_path>...                     Drop tracked dotfiles back to
                                               original locations
-  find [<path>]                               Find untracked symlinks pointing
-                                              to the dotfiles repo
-  list [-p|--path <path>]                     List tracked dotfiles
+  find [<path>]                               Find untracked symlinks to the
+                                              dotfiles repo
+  import <path>...                            Import an untracked dotfile
+                                              symlink
+  install [-p|--path <repo_rel_path>]         Install symlinks for tracked
+                                              dotfiles
   uninstall                                   Uninstall tracked symlinks
   help|-h|--help                              Show this help
   version|-v|--version                        Show version
@@ -107,6 +109,27 @@ add_link() {
   echo "Added dotfile '$dest_path' via symlink at '$source_path'"
 }
 
+list_links() {
+  filter_path="$1"
+  while IFS= read -r line; do
+    case "$line" in
+      ''|'#'*) continue ;;
+    esac
+    src=$(printf '%s' "$line" | cut -d'|' -f1)
+    tgt=$(printf '%s' "$line" | cut -d'|' -f2-)
+
+    if [ -n "$filter_path" ]; then
+      case "$src" in
+        "$filter_path"/*) ;;
+        "$filter_path") ;;
+        *) continue ;;
+      esac
+    fi
+
+    echo "$src > $tgt"
+  done < "$MAPPINGS_FILE"
+}
+
 move_link() {
   source_path="$1"
   dest_path="$2"
@@ -141,59 +164,6 @@ move_link() {
   printf "%s\n" "$mapping_entry" >> "$MAPPINGS_FILE"
 
   echo "Moved dotfile '$source_path' to '$dest_path' and updated symlink"
-}
-
-install_links() {
-  filter_path="$1"
-  echo "Installing dotfile symlinks from '$MAPPINGS_FILE'"
-
-  while IFS= read -r line; do
-    case "$line" in
-      ''|'#'* ) continue ;;
-    esac
-
-    src=$(printf '%s' "$line" | cut -d'|' -f1)
-    tgt=$(printf '%s' "$line" | cut -d'|' -f2-)
-
-    if [ -n "$filter_path" ]; then
-      case "$src" in
-        "$filter_path"/*) ;;
-        "$filter_path") ;;
-        *) continue ;;
-      esac
-    fi
-
-    abs_src="$DOTFILES/$src"
-    abs_tgt="$(tilde_expand "$tgt")"
-    if [ ! -e "$abs_src" ]; then
-      echo "  Source not found: '$abs_src'" >&2
-      continue
-    fi
-
-    if [ -e "$abs_tgt" ] || [ -L "$abs_tgt" ]; then
-      echo "  Target exists: '$abs_tgt'" >&2
-      continue
-    fi
-
-    mkdir -p "$(dirname "$abs_tgt")"
-    ln -s "$abs_src" "$abs_tgt" || echo "  Failed linking $abs_src > $abs_tgt" >&2
-  done < "$MAPPINGS_FILE"
-}
-
-uninstall_links() {
-  # Remove targets; then prune mappings file
-  while IFS= read -r line; do
-    case "$line" in ''|'#'* ) continue ;;
-    esac
-    src=$(printf '%s' "$line" | cut -d'|' -f1)
-    tgt=$(printf '%s' "$line" | cut -d'|' -f2-)
-    abs_tgt="$(tilde_expand "$tgt")"
-    if [ -L "$abs_tgt" ] || [ -e "$abs_tgt" ]; then
-      rm -f "$abs_tgt" 2>/dev/null
-    fi
-  done < "$MAPPINGS_FILE"
-
-  echo "Uninstalled dotfile symlinks tracked in $MAPPINGS_FILE by deleting them"
 }
 
 drop_link() {
@@ -258,12 +228,52 @@ $links
 EOF
 }
 
-list_links() {
+import_links() {
+  link_path="$1"
+  if [ ! -L "$link_path" ]; then
+    echo "Cannot import '$link_path': it is not a valid symlink" >&2; return
+  fi
+
+  link_dest=$(readlink "$link_path")
+  case "$link_dest" in
+    "$DOTFILES"*)
+      repo_rel_path="${link_dest#"$DOTFILES/"}"
+      ;;
+    *)
+      echo "Cannot import symlink '$link_path': it does not point to the dotfiles repo" >&2; return
+      ;;
+  esac
+
+  case "$link_path" in
+    "$HOME"*)
+      rel_path="${link_path#"$HOME"}"
+      link_short_path="~${rel_path}"
+      ;;
+    *)
+      link_short_path="$source_path"
+      ;;
+  esac
+
+  mapping=$(awk -v s="$link_short_path" -F'|' '$2 == s { print; exit }' "$MAPPINGS_FILE")
+  if [ -n "$mapping" ]; then
+    echo "Cannot import symlink '$link_path': it is already tracked" >&2; return
+  fi
+
+  mapping_entry="$repo_rel_path|$link_short_path"
+  printf "%s\n" "$mapping_entry" >> "$MAPPINGS_FILE"
+
+  echo "Imported dotfile symlink '$link_path'"
+}
+
+install_links() {
   filter_path="$1"
+  echo "Installing dotfile symlinks from '$MAPPINGS_FILE'"
+
   while IFS= read -r line; do
     case "$line" in
-      ''|'#'*) continue ;;
+      ''|'#'* ) continue ;;
     esac
+
     src=$(printf '%s' "$line" | cut -d'|' -f1)
     tgt=$(printf '%s' "$line" | cut -d'|' -f2-)
 
@@ -275,8 +285,37 @@ list_links() {
       esac
     fi
 
-    echo "$src > $tgt"
+    abs_src="$DOTFILES/$src"
+    abs_tgt="$(tilde_expand "$tgt")"
+    if [ ! -e "$abs_src" ]; then
+      echo "  Source not found: '$abs_src'" >&2
+      continue
+    fi
+
+    if [ -e "$abs_tgt" ] || [ -L "$abs_tgt" ]; then
+      echo "  Target exists: '$abs_tgt'" >&2
+      continue
+    fi
+
+    mkdir -p "$(dirname "$abs_tgt")"
+    ln -s "$abs_src" "$abs_tgt" || echo "  Failed linking $abs_src > $abs_tgt" >&2
   done < "$MAPPINGS_FILE"
+}
+
+uninstall_links() {
+  # Remove targets; then prune mappings file
+  while IFS= read -r line; do
+    case "$line" in ''|'#'* ) continue ;;
+    esac
+    src=$(printf '%s' "$line" | cut -d'|' -f1)
+    tgt=$(printf '%s' "$line" | cut -d'|' -f2-)
+    abs_tgt="$(tilde_expand "$tgt")"
+    if [ -L "$abs_tgt" ] || [ -e "$abs_tgt" ]; then
+      rm -f "$abs_tgt" 2>/dev/null
+    fi
+  done < "$MAPPINGS_FILE"
+
+  echo "Uninstalled dotfile symlinks tracked in $MAPPINGS_FILE by deleting them"
 }
 
 case "$1" in
@@ -305,7 +344,7 @@ case "$1" in
       esac
     done
     ;;
-  install)
+  list)
     shift
     filter_path=""
     while [ $# -gt 0 ]; do
@@ -329,7 +368,7 @@ case "$1" in
           ;;
       esac
     done
-    install_links "$filter_path"
+    list_links "$filter_path"
     ;;
   move)
     shift
@@ -359,7 +398,14 @@ case "$1" in
       help
     fi
     ;;
-  list)
+  import)
+    shift
+    while [ $# -gt 0 ]; do
+      import_links "$1"
+      shift
+    done
+    ;;
+  install)
     shift
     filter_path=""
     while [ $# -gt 0 ]; do
@@ -383,7 +429,7 @@ case "$1" in
           ;;
       esac
     done
-    list_links "$filter_path"
+    install_links "$filter_path"
     ;;
   uninstall)
     uninstall_links
