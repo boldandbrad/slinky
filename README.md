@@ -92,11 +92,9 @@ slinky move editors/nvim config/nvim    # move a tracked dotfile within the repo
 ### Find
 
 ```sh
-slinky find                             # find existing symlinks to your dotfiles repo
+slinky find                             # search the user's home directory for untracked symlinks pointing to the dotfiles repo
+slinky find ~/.config                   # search in the specified directory
 ```
-
-Useful for auditing which dotfiles are already managed or for finding symlinks
-that weren't added through slinky.
 
 ### Install
 
