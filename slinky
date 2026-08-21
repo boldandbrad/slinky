@@ -2,7 +2,7 @@
 
 # slinky: simple dotfile symlink management
 
-VERSION="0.2.0"
+VERSION="0.3.0-dev"
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 if [ ! -d "$DOTFILES" ]; then
@@ -39,7 +39,7 @@ Commands:
   install [-p|--path <path>]          Install symlinks for tracked dotfiles
   move <repo_rel_src> <repo_rel_tgt>  Move a tracked dotfile within the repo and update its symlink
   drop <repo_rel_path>...             Drop one or more files/directories back to original locations
-  find                                Find symlinks pointing to the dotfiles repo
+  find [<path>]                       Find untracked symlinks pointing to the dotfiles repo
   list [-p|--path <path>]             List tracked dotfiles
   uninstall                           Uninstall tracked symlinks
   help|-h|--help                      Show this help
@@ -171,7 +171,7 @@ install_links() {
     fi
 
     mkdir -p "$(dirname "$abs_tgt")"
-    ln -s "$abs_src" "$abs_tgt" || echo "  Failed linking $abs_src -> $abs_tgt" >&2
+    ln -s "$abs_src" "$abs_tgt" || echo "  Failed linking $abs_src > $abs_tgt" >&2
   done < "$MAPPINGS_FILE"
 }
 
@@ -221,7 +221,36 @@ drop_link() {
 }
 
 find_links() {
-  find ~/ -maxdepth 3 -type l -lname "$DOTFILES*" 2>/dev/null
+  search_path="$1"
+  if [ -z "$search_path" ]; then
+    search_path=~
+  fi
+
+  if [ ! -d "$search_path" ]; then
+    echo "Cannot search in '$search_path': it is not a directory" >&2; return
+  fi
+
+  links=$(find "$search_path" -maxdepth 3 -type l -lname "$DOTFILES*" 2>/dev/null)
+  while read -r link; do
+    repo_rel_path=""
+    while IFS= read -r mapping; do
+      src=$(printf '%s' "$mapping" | cut -d'|' -f1)
+      tgt=$(printf '%s' "$mapping" | cut -d'|' -f2-)
+      abs_tgt="$(tilde_expand "$tgt")"
+
+      if [ "$link" = "$abs_tgt" ]; then
+        repo_rel_path="$src"
+        break
+      fi
+    done < "$MAPPINGS_FILE"
+
+    if [ -z "$repo_rel_path" ]; then
+      dest=$(readlink "$link")
+      echo "$link > $dest"
+    fi
+  done << EOF
+$links
+EOF
 }
 
 list_links() {
@@ -241,7 +270,7 @@ list_links() {
       esac
     fi
 
-    printf "%s -> %s\n" "$src" "$tgt"
+    echo "$src > $tgt"
   done < "$MAPPINGS_FILE"
 }
 
@@ -316,7 +345,14 @@ case "$1" in
     fi
     ;;
   find)
-    find_links
+    shift
+    if [ $# -eq 1 ]; then
+      find_links "$1"
+    elif [ $# -eq 0 ]; then
+      find_links
+    else
+      help
+    fi
     ;;
   list)
     shift
