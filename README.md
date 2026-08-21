@@ -116,6 +116,12 @@ slinky drop config/nvim .vimrc          # drop multiple at once
 slinky uninstall                        # remove all managed symlinks
 ```
 
+### Help
+
+```sh
+slinky help                             # show the help message
+```
+
 ## Example repos
 
 Check out [slinky in the wild](https://github.com/topics/slinky-dotfiles). Add

@@ -32,18 +32,23 @@ tilde_expand() {
 
 help() {
   cat <<'EOF'
-slinky - dotfile symlink management
-Usage: slinky <command> [args]
-Commands:
-  add [-p|--path <path>] <src>...     Add one or more files/directories to dotfiles
-  install [-p|--path <path>]          Install symlinks for tracked dotfiles
-  move <repo_rel_src> <repo_rel_tgt>  Move a tracked dotfile within the repo and update its symlink
-  drop <repo_rel_path>...             Drop one or more files/directories back to original locations
-  find [<path>]                       Find untracked symlinks pointing to the dotfiles repo
-  list [-p|--path <path>]             List tracked dotfiles
-  uninstall                           Uninstall tracked symlinks
-  help|-h|--help                      Show this help
-  --version|-v                        Show version
+usage: slinky <command> [args]
+
+commands:
+  add [-p|--path <repo_rel_path>] <src>...    Add and track new files or
+                                              directories to dotfiles
+  install [-p|--path <path>]                  Install symlinks for tracked
+                                              dotfiles
+  move <repo_rel_src> <repo_rel_tgt>          Move a tracked dotfile within the
+                                              repo and update its symlink
+  drop <repo_rel_path>...                     Drop tracked dotfiles back to
+                                              original locations
+  find [<path>]                               Find untracked symlinks pointing
+                                              to the dotfiles repo
+  list [-p|--path <path>]                     List tracked dotfiles
+  uninstall                                   Uninstall tracked symlinks
+  help|-h|--help                              Show this help
+  version|-v|--version                        Show version
 EOF
 }
 
@@ -386,7 +391,7 @@ case "$1" in
   help|"-h"|"--help")
     help
     ;;
-  --version|-v)
+  version|"-v"|"--version")
     echo "slinky version $VERSION"
     ;;
   *)
