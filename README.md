@@ -79,10 +79,11 @@ clean slate.
 1. Create an empty directory at `~/dotfiles`: `mkdir ~/dotfiles`
 2. Initialize a git repository in that directory: `cd ~/dotfiles && git init`
 3. Add your first dotfile: `slinky add ~/.vimrc`
+4. Commit and push the changes to a remote repo, including the generated
+`slinky.psv` file
 
-That's it! All that's left is to commit and push your changes to a remote repo,
-including the `slinky.psv` file. To install your dotfiles onto another computer,
-read [Syncing multiple computers](#syncing-multiple-computers).
+That's it! To install your dotfiles onto another computer, read
+[Syncing multiple computers](#syncing-multiple-computers).
 
 ### Migrating to slinky
 
@@ -93,9 +94,9 @@ you'd like to migrate to slinky.
 where it is
 2. Find your existing symlinks: `slinky find`
 3. Import them: `slinky import symlink1 symlink2 ...`
+4. Delete your previous dotfile manager
 
-That's it! All that's left is to delete your previous dotfile manager. To
-install your dotfiles onto another computer, read
+That's it! To install your dotfiles onto another computer, read
 [Syncing multiple computers](#syncing-multiple-computers).
 
 ### Syncing multiple computers
@@ -103,10 +104,11 @@ install your dotfiles onto another computer, read
 Follow this guide to easily keep your dotfiles in sync across multiple devices.
 
 1. Make sure slinky is [installed](#install) on each computer
-2. Clone your git repository, example:
+2. Clone your git repository on each computer, example:
 `git clone https://github.com/yourname/dotfiles.git ~/dotfiles`
 3. Backup any local dotfiles
 4. Install dotfile symlinks: `slinky install`
+5. Commit and push often as you make local changes, then repeat
 
 That's it!
 
