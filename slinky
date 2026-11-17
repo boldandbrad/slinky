@@ -4,7 +4,7 @@
 # Requires:
 #   POSIX sh, awk, find, ln, mkdir, mv, rm, readlink, mktemp
 
-VERSION="0.4.0-dev"
+VERSION="1.0.0-dev"
 
 for command in awk find ln mkdir mv rm readlink mktemp; do
     command -v "$command" >/dev/null 2>&1 || {
@@ -24,10 +24,10 @@ if [ ! -d "$DOTFILES" ]; then
   exit 1
 fi
 
-MAPPINGS_FILE="$DOTFILES/slinks.psv"
-[ -f "$MAPPINGS_FILE" ] || {
-  touch "$MAPPINGS_FILE"
-}
+MAPPINGS_FORMAT_VERSION=1
+MAPPINGS_FILE="$DOTFILES/slinky-v$MAPPINGS_FORMAT_VERSION.psv"
+LEGACY_MAPPINGS_FILE="$DOTFILES/slinky.psv"
+LEGACY_BACKUP_FILE="$DOTFILES/slinky-v0.psv.bak"
 
 _absolute_path() (
   path="$1"
@@ -79,12 +79,70 @@ _normalize_dotfile_path() (
   printf './%s\n' "$path"
 )
 
-# TODO: migrate v0 map files
-migrate_v0() (
-  # TODO: handle the "./"-prefixed dotfile path format in field 2.
-  # TODO: reverse legacy "<dotfile>|<link>" records to "<link>|<dotfile>".
-  echo "migrating"
+_check_mappings_format() (
+  for file in "$DOTFILES"/slinky-v*.psv; do
+    [ -f "$file" ] || continue
+    version=${file##*/slinky-v}
+    version=${version%.psv}
+    case "$version" in ''|*[!0-9]*) continue ;; esac
+    [ "$version" -gt "$MAPPINGS_FORMAT_VERSION" ] || continue
+    if [ -f "$MAPPINGS_FILE" ]; then
+      echo "Warning: '$(_home_path "$file")' uses a newer mapping format; using '$(_home_path "$MAPPINGS_FILE")'." >&2
+      return 0
+    fi
+    echo "Error: '$(_home_path "$file")' uses a newer mapping format; update slinky to use this dotfiles repository." >&2
+    return 1
+  done
 )
+
+# Migrate a v0.3.0 "<dotfile>|<link>" mappings file to the current
+# "<link>|./dotfile" format.
+migrate_v0() (
+  if [ -s "$MAPPINGS_FILE" ]; then
+    echo "Warning: '$(_home_path "$LEGACY_MAPPINGS_FILE")' exists but '$(_home_path "$MAPPINGS_FILE")' is not empty; skipping migration." >&2
+    return 0
+  fi
+
+  if [ -e "$LEGACY_BACKUP_FILE" ]; then
+    echo "Error: backup file already exists: '$(_home_path "$LEGACY_BACKUP_FILE")'" >&2
+    return 1
+  fi
+
+  if ! awk -F'|' '
+    /^[[:space:]]*$/ { print ""; next }
+    /^[[:space:]]*#/ { sub(/^[[:space:]]+/, ""); print; next }
+    {
+      dotfile = $1
+      link = $2
+      sub(/^(\.\/)+/, "", dotfile)
+      sub(/\/+$/, "", dotfile)
+      if (NF != 2 || dotfile == "" || link == "") { bad = 1; next }
+      print link "|./" dotfile
+    }
+    END { exit bad }
+  ' "$LEGACY_MAPPINGS_FILE" > "$MAPPINGS_FILE"; then
+    rm -f "$MAPPINGS_FILE"
+    echo "Error: cannot migrate '$(_home_path "$LEGACY_MAPPINGS_FILE")'; expected '<dotfile>|<link>' records." >&2
+    return 1
+  fi
+
+  if ! mv "$LEGACY_MAPPINGS_FILE" "$LEGACY_BACKUP_FILE"; then
+    rm -f "$MAPPINGS_FILE"
+    echo "Error: failed to back up '$(_home_path "$LEGACY_MAPPINGS_FILE")'" >&2
+    return 1
+  fi
+
+  echo "Migrated mappings: $(_home_path "$LEGACY_MAPPINGS_FILE") > $(_home_path "$MAPPINGS_FILE")"
+  echo "Backup saved: $(_home_path "$LEGACY_BACKUP_FILE") - validate that slinky works, then delete it."
+)
+
+_check_mappings_format || exit 1
+
+if [ -f "$LEGACY_MAPPINGS_FILE" ]; then
+  migrate_v0 || exit 1
+fi
+
+[ -f "$MAPPINGS_FILE" ] || : > "$MAPPINGS_FILE"
 
 help() (
   cat <<'EOF'
@@ -475,9 +533,6 @@ uninstall_links() (
     fi
   done < "$MAPPINGS_FILE"
 )
-
-# TODO: do map file migrations
-# migrate_v0
 
 status=0
 case "$1" in

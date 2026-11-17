@@ -66,7 +66,7 @@ By default, slinky assumes your dotfiles repository is located at
 `$HOME/dotfiles`, but you can change this behavior by setting the `$DOTFILES`
 environment variable.
 
-Slinky maintains a simple pipe-separated value file (`slinks.psv`) in the
+Slinky maintains a simple pipe-separated value file (`slinky-v1.psv`) in the
 dotfiles repository root to track the files and directories it manages. Each
 line records the symlink location and the dotfile's path relative to the
 mappings file, prefixed with `./`. Example:
@@ -79,6 +79,20 @@ mappings file, prefixed with `./`. Example:
 
 Combined, these patterns let you backup your dotfiles using your preferred
 version control or cloud storage system for easy install on any machine.
+
+### Mapping file versioning
+
+The mapping file has its own format version, independent of the slinky release.
+The current format is version 1, stored in `slinky-v1.psv`. A new slinky release
+does not rename it unless the mapping format changes, which can happen in any
+release.
+
+On a format change, slinky migrates the file to a new name such as
+`slinky-v2.psv` and renames the old one to `slinky-v1.psv.bak`. Only the file
+matching its supported format is active; `.bak` files are ignored. If slinky
+finds a newer format but no active file it supports, it tells you to update
+slinky. Legacy `slinky.psv` files are migrated to `slinky-v1.psv` and backed up
+as `slinky-v0.psv.bak`.
 
 ## Getting started
 
@@ -95,7 +109,7 @@ clean slate.
 2. Initialize a git repository in that directory: `cd ~/dotfiles && git init`
 3. Add your first dotfile: `slinky add ~/.vimrc`
 4. Commit and push the changes to a remote repo, including the generated
-`slinks.psv` file
+`slinky-v1.psv` file
 
 That's it! To install your dotfiles onto another computer, read
 [Syncing multiple computers](#syncing-multiple-computers).
