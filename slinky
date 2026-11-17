@@ -145,7 +145,8 @@ fi
 [ -f "$MAPPINGS_FILE" ] || : > "$MAPPINGS_FILE"
 
 help() (
-  cat <<'EOF'
+  if [ $# -eq 0 ]; then
+    cat <<'EOF'
 usage: slinky <command> [args]
 
 commands:
@@ -165,7 +166,25 @@ commands:
   uninstall                                   Uninstall tracked symlinks
   help|-h|--help                              Show this help
   version|-v|--version                        Show version
+
+All commands accept -h/--help. Use -- before paths beginning with '-'.
 EOF
+    return
+  fi
+
+  case "$1" in
+    add) echo "usage: slinky add [-p|--path <repo_rel_path>] <src>..." ;;
+    list) echo "usage: slinky list [-p|--path <repo_rel_path>]" ;;
+    move) echo "usage: slinky move <repo_rel_src> <repo_rel_tgt>" ;;
+    drop) echo "usage: slinky drop <repo_rel_path>..." ;;
+    find) echo "usage: slinky find [<path>]" ;;
+    import) echo "usage: slinky import <path>..." ;;
+    install) echo "usage: slinky install [-p|--path <repo_rel_path>]" ;;
+    uninstall) echo "usage: slinky uninstall" ;;
+    help) echo "usage: slinky help" ;;
+    version) echo "usage: slinky version" ;;
+    *) echo "usage: slinky <command> [args]" ;;
+  esac
 )
 
 add_dotfile() (
@@ -534,135 +553,164 @@ uninstall_links() (
   done < "$MAPPINGS_FILE"
 )
 
+# Print command usage and exit if -h/--help appears before --.
+_cmd_help() {
+  _cmd=$1
+  shift
+  for arg in "$@"; do
+    case "$arg" in
+      --) return 0 ;;
+      -h|--help) help "$_cmd"; exit 0 ;;
+    esac
+  done
+}
+
+# Reject option-like operands unless -- comes first.
+_check_operands() {
+  _cmd=$1
+  shift
+  [ "$1" = "--" ] && return 0
+  for arg in "$@"; do
+    case "$arg" in -*) help "$_cmd" >&2; exit 1 ;; esac
+  done
+}
+
+# Parse list/install options and set filter_path in the caller.
+_parse_filter() {
+  _cmd=$1
+  shift
+  filter_path=""
+  path_next=0
+  while [ $# -gt 0 ]; do
+    if [ "$path_next" = 1 ]; then
+      case "$1" in ''|-*) help "$_cmd" >&2; exit 1 ;; esac
+      filter_path=$1
+      path_next=0
+    else
+      case "$1" in
+        --) [ $# -eq 1 ] || { help "$_cmd" >&2; exit 1; } ;;
+        -p|--path)
+          [ -z "$filter_path" ] || { help "$_cmd" >&2; exit 1; }
+          path_next=1
+          ;;
+        *) help "$_cmd" >&2; exit 1 ;;
+      esac
+    fi
+    shift
+  done
+  [ "$path_next" = 0 ] || { help "$_cmd" >&2; exit 1; }
+}
+
 status=0
 case "$1" in
   add)
     shift
+    _cmd_help add "$@"
     repo_rel_path=""
+    path_next=0
+    for arg in "$@"; do
+      [ "$arg" = "--" ] && break
+      if [ "$path_next" = 1 ]; then
+        case "$arg" in ''|-*) help add >&2; exit 1 ;; esac
+        repo_rel_path=$arg
+        path_next=0
+      else
+        case "$arg" in
+          -p|--path)
+            [ -z "$repo_rel_path" ] || { help add >&2; exit 1; }
+            path_next=1
+            ;;
+          -*) help add >&2; exit 1 ;;
+        esac
+      fi
+    done
+    [ "$path_next" = 0 ] || { help add >&2; exit 1; }
+
+    source_count=0
     while [ $# -gt 0 ]; do
       case "$1" in
-        -p|--path)
-          if [ -n "$2" ] && [ "${2#-}" = "$2" ]; then
-            repo_rel_path="$2"
-            shift 2
-          else
-            echo "Error: -p/--path requires a path argument" >&2
-            exit 1
-          fi
-          ;;
-        -*)
-          echo "Error: Unknown option '$1'" >&2
-          exit 1
-          ;;
-        *)
-          add_dotfile "$1" "$repo_rel_path" || status=1
-          shift
-          ;;
+        -p|--path) shift 2 ;;
+        --) shift; break ;;
+        *) add_dotfile "$1" "$repo_rel_path" || status=1; source_count=$((source_count + 1)); shift ;;
       esac
     done
+    for arg in "$@"; do
+      add_dotfile "$arg" "$repo_rel_path" || status=1
+      source_count=$((source_count + 1))
+    done
+    [ "$source_count" -gt 0 ] || { help add >&2; exit 1; }
     ;;
   list)
     shift
-    filter_path=""
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -p|--path)
-          if [ -n "$2" ] && [ "${2#-}" = "$2" ]; then
-            filter_path="$2"
-            shift 2
-          else
-            echo "Error: -p/--path requires a path argument" >&2
-            exit 1
-          fi
-          ;;
-        -*)
-          echo "Error: Unknown option '$1'" >&2
-          exit 1
-          ;;
-        *)
-          echo "Error: Unknown argument '$1'" >&2
-          exit 1
-          ;;
-      esac
-    done
+    _cmd_help list "$@"
+    _parse_filter list "$@"
     list_dotfiles "$filter_path" || status=1
     ;;
   move)
     shift
-    if [ $# -eq 2 ]; then
-      move_dotfile "$1" "$2" || status=1
-    else
-      help && status=1
-    fi
+    _cmd_help move "$@"
+    _check_operands move "$@"
+    [ "$1" = "--" ] && shift
+    [ $# -eq 2 ] || { help move >&2; exit 1; }
+    move_dotfile "$1" "$2" || status=1
     ;;
   drop)
     shift
-    if [ $# -ge 1 ]; then
-      for repo_rel_path in "$@"; do
-        drop_dotfile "$repo_rel_path" || status=1
-      done
-    else
-      help && status=1
-    fi
+    _cmd_help drop "$@"
+    _check_operands drop "$@"
+    [ "$1" = "--" ] && shift
+    [ $# -ge 1 ] || { help drop >&2; exit 1; }
+    for repo_rel_path in "$@"; do
+      drop_dotfile "$repo_rel_path" || status=1
+    done
     ;;
   find)
     shift
-    if [ $# -eq 1 ]; then
-      find_links "$1" || status=1
-    elif [ $# -eq 0 ]; then
-      find_links || status=1
-    else
-      help && status=1
-    fi
+    _cmd_help find "$@"
+    _check_operands find "$@"
+    [ "$1" = "--" ] && shift
+    [ $# -le 1 ] || { help find >&2; exit 1; }
+    find_links "$@" || status=1
     ;;
   import)
     shift
-    if [ $# -gt 0 ]; then
-      while [ $# -gt 0 ]; do
-        import_link "$1" || status=1
-        shift
-      done
-    else
-      help && status=1
-    fi
+    _cmd_help import "$@"
+    _check_operands import "$@"
+    [ "$1" = "--" ] && shift
+    [ $# -ge 1 ] || { help import >&2; exit 1; }
+    for arg in "$@"; do
+      import_link "$arg" || status=1
+    done
     ;;
   install)
     shift
-    filter_path=""
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -p|--path)
-          if [ -n "$2" ] && [ "${2#-}" = "$2" ]; then
-            filter_path="$2"
-            shift 2
-          else
-            echo "Error: -p/--path requires a path argument" >&2
-            exit 1
-          fi
-          ;;
-        -*)
-          echo "Error: Unknown option '$1'" >&2
-          exit 1
-          ;;
-        *)
-          echo "Error: Unknown argument '$1'" >&2
-          exit 1
-          ;;
-      esac
-    done
+    _cmd_help install "$@"
+    _parse_filter install "$@"
     install_links "$filter_path" || status=1
     ;;
   uninstall)
+    shift
+    _cmd_help uninstall "$@"
+    [ "$1" = "--" ] && shift
+    [ $# -eq 0 ] || { help uninstall >&2; exit 1; }
     uninstall_links || status=1
     ;;
   help|"-h"|"--help")
+    shift
+    case "$1" in --|-h|--help) shift ;; esac
+    [ $# -eq 0 ] || { help help >&2; exit 1; }
     help
     ;;
   version|"-v"|"--version")
+    shift
+    _cmd_help version "$@"
+    [ "$1" = "--" ] && shift
+    [ $# -eq 0 ] || { help version >&2; exit 1; }
     echo "slinky version $VERSION"
     ;;
   *)
-    help && status=1
+    help "$1" >&2
+    exit 1
     ;;
 esac
 exit "$status"

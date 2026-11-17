@@ -143,13 +143,15 @@ That's it!
 
 ## Usage
 
+All commands accept `-h`/`--help` and treat `--` as the end of options. Use `--`
+before a path that begins with `-`.
+
 ### Add
 
 ```sh
 slinky add ~/.vimrc                     # add to dotfiles root
 slinky add ~/.vimrc ~/.bashrc           # add multiple at once
 slinky add -p editors ~/.config/nvim    # specify repo subdirectory
-slinky add ~/.vimrc -p editors          # flag can appear anywhere
 ```
 
 ### List
