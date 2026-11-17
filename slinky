@@ -1,16 +1,30 @@
 #!/bin/sh
 
 # slinky: simple dotfile symlink management
+# Requires:
+#   POSIX sh, awk, find, ln, mkdir, mv, rm, readlink, mktemp
 
 VERSION="0.4.0-dev"
 
+for command in awk find ln mkdir mv rm readlink mktemp; do
+    command -v "$command" >/dev/null 2>&1 || {
+        echo "Error: required command not found: $command" >&2
+        exit 1
+    }
+done
+
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
+case "$DOTFILES" in
+  /) echo "Error: DOTFILES must not be root: $DOTFILES" >&2; exit 1 ;;
+  /*) ;;
+  *) echo "Error: DOTFILES must be an absolute path: $DOTFILES" >&2; exit 1 ;;
+esac
 if [ ! -d "$DOTFILES" ]; then
   echo "Error: '$DOTFILES' is not a directory or cannot be accessed." >&2
   exit 1
 fi
 
-MAPPINGS_FILE="$DOTFILES/slinky2.psv"
+MAPPINGS_FILE="$DOTFILES/slinks.psv"
 [ -f "$MAPPINGS_FILE" ] || {
   touch "$MAPPINGS_FILE"
 }
@@ -34,15 +48,19 @@ _home_path() (
   esac
 )
 
-_path_exists() (
+_path_exists() {
   [ -e "$1" ] || [ -L "$1" ]
+}
+
+_find_mapping_by_dotfile() (
+  awk -F'|' -v path="$1" '$2 == path { print; exit }' "$MAPPINGS_FILE"
 )
 
-_mapping_link() (
+_get_mapping_link() (
   printf '%s\n' "${1%%|*}"
 )
 
-_mapping_dotfile() (
+_get_mapping_dotfile() (
   printf '%s\n' "${1#*|}"
 )
 
@@ -124,7 +142,7 @@ add_dotfile() (
   fi
 
   if ! printf "%s\n" "$mapping_entry" >> "$MAPPINGS_FILE"; then
-    rm "$source_path"
+    rm -f "$source_path"
     mv "$dotfile_path" "$source_path"
     echo "Error: Failed to write $source_path record to $MAPPINGS_FILE" >&2
     return 1
@@ -135,11 +153,11 @@ add_dotfile() (
 
 list_dotfiles() (
   filter_path="$1"
-  while IFS= read -r line; do
-    case "$line" in ''|'#'*) continue ;;
+  while IFS= read -r mapping; do
+    case "$mapping" in ''|'#'*) continue ;;
     esac
-    link_path=$(_mapping_link "$line")
-    dotfile_path=$(_mapping_dotfile "$line")
+    link_path=$(_get_mapping_link "$mapping")
+    dotfile_path=$(_get_mapping_dotfile "$mapping")
 
     if [ -n "$filter_path" ]; then
       case "$dotfile_path" in
@@ -164,13 +182,13 @@ move_dotfile() (
     return 1
   fi
 
-  mapping=$(awk -v s="$source_path" -F'|' '$2 == s { print; exit }' "$MAPPINGS_FILE")
+  mapping=$(_find_mapping_by_dotfile "$source_path")
   if [ -z "$mapping" ]; then
     echo "Cannot move dotfile '$source_path': no mapping found in '$MAPPINGS_FILE'." >&2
     return 1
   fi
 
-  link_path=$(_mapping_link "$mapping")
+  link_path=$(_get_mapping_link "$mapping")
   link_abs_path=$(_absolute_path "$link_path")
 
   if _path_exists "$dest_abs_path"; then
@@ -233,8 +251,8 @@ move_dotfile() (
 drop_dotfile() (
   dotfile_path="$1"
 
-  line=$(awk -v s="$dotfile_path" -F'|' '$2 == s { print; exit }' "$MAPPINGS_FILE")
-  if [ -z "$line" ]; then
+  mapping=$(_find_mapping_by_dotfile "$source_path")
+  if [ -z "$mapping" ]; then
     echo "Skipped, dotfile not tracked: $dotfile_path" >&2
     return 1
   fi
@@ -245,7 +263,7 @@ drop_dotfile() (
     return 1
   fi
 
-  link_path=$(_mapping_link "$line")
+  link_path=$(_get_mapping_link "$mapping")
   link_abs_path=$(_absolute_path "$link_path")
   if [ -L "$link_abs_path" ]; then
     rm "$link_abs_path" || return 1
@@ -300,13 +318,13 @@ find_links() (
   [ -n "$found_links" ] || return 0
   while read -r found_link; do
     tracked_dotfile=""
-    while IFS= read -r line; do
-      case "$line" in ''|'#'* ) continue ;;
+    while IFS= read -r mapping; do
+      case "$mapping" in ''|'#'* ) continue ;;
       esac
 
-      link_path=$(_mapping_link "$line")
+      link_path=$(_get_mapping_link "$mapping")
       link_abs_path=$(_absolute_path "$link_path")
-      dotfile_path=$(_mapping_dotfile "$line")
+      dotfile_path=$(_get_mapping_dotfile "$mapping")
       if [ "$found_link" = "$link_abs_path" ]; then
         tracked_dotfile="$dotfile_path"
         break
@@ -364,12 +382,11 @@ import_link() (
 install_links() (
   filter_path="$1"
   install_status=0
-  while IFS= read -r line; do
-    case "$line" in ''|'#'* ) continue ;;
+  while IFS= read -r mapping; do
+    case "$mapping" in ''|'#'* ) continue ;;
     esac
-
-    link_path=$(_mapping_link "$line")
-    dotfile_path=$(_mapping_dotfile "$line")
+    link_path=$(_get_mapping_link "$mapping")
+    dotfile_path=$(_get_mapping_dotfile "$mapping")
 
     if [ -n "$filter_path" ]; then
       case "$dotfile_path" in
@@ -393,8 +410,9 @@ install_links() (
       continue
     fi
 
-    if ! mkdir -p "$(dirname "$link_abs_path")"; then
-      echo "Error: Failed to create directory '$dest_dir'" >&2
+    link_dir="$(dirname "$link_abs_path")"
+    if ! mkdir -p "$link_dir"; then
+      echo "Error: Failed to create directory '$link_dir'" >&2
       install_status=1
       continue
     fi
@@ -415,10 +433,10 @@ install_links() (
 )
 
 uninstall_links() (
-  while IFS= read -r line; do
-    case "$line" in ''|'#'* ) continue ;;
+  while IFS= read -r mapping; do
+    case "$mapping" in ''|'#'* ) continue ;;
     esac
-    link_path=$(_mapping_link "$line")
+    link_path=$(_get_mapping_link "$mapping")
     link_abs_path=$(_absolute_path "$link_path")
     if [ -L "$link_abs_path" ]; then
       rm "$link_abs_path" || return 1

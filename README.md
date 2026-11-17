@@ -9,14 +9,21 @@ of them for easy install. That's it.
 
 - ✨ Simple: One command to add, install, drop, or uninstall dotfiles.
 - 🔒 Safe: Won't overwrite existing files without confirmation.
-- 📜 Git-friendly: Just a script and a map file - works with any VCS.
+- 📜 Git-friendly: Symlinked dotfiles work well with any VCS.
 - 🗂️ Flexible: Organize files however you want - by host, OS, or category.
 - 🔧 No config: Just works with your dotfiles repo.
-- 🐚 Portable: Single POSIX shell script with zero dependencies.
+- 🐚 Portable: Single POSIX shell script with few dependencies.
 
 ## Install
 
-Slinky supports any system that ships with a POSIX-compliant shell.
+### Dependencies
+
+Slinky only relies on only a few external packages that ship by default on most
+modern Linux, macOS, and BSD systems:
+
+- `readlink`
+- `mktemp`
+- `find` with `-maxdepth` and `-lname`
 
 ### Package manager
 
@@ -24,8 +31,8 @@ Slinky supports any system that ships with a POSIX-compliant shell.
 brew install boldandbrad/tap/slinky
 ```
 
-> If this project gains traction I may add slinky to other package managers in
-> the future.
+> Slinky is mostly a personal project, but if it gains traction I may add
+> slinky to other package managers in the future.
 
 ### Manual
 
