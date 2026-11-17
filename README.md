@@ -18,12 +18,18 @@ of them for easy install. That's it.
 
 ### Dependencies
 
-Slinky only relies on only a few external packages that ship by default on most
-modern Linux, macOS, and BSD systems:
+Slinky is a POSIX shell script that relies only on a few standard utilities,
+which ship by default on most modern Linux, macOS, and BSD systems:
 
+- `sh`
+- `awk`
+- `find` with `-maxdepth` and `-lname`
+- `ln`
+- `mkdir`
+- `mv`
+- `rm`
 - `readlink`
 - `mktemp`
-- `find` with `-maxdepth` and `-lname`
 
 ### Package manager
 
@@ -60,13 +66,15 @@ By default, slinky assumes your dotfiles repository is located at
 `$HOME/dotfiles`, but you can change this behavior by setting the `$DOTFILES`
 environment variable.
 
-Slinky maintains a simple pipe-separated value file (`slinky.psv`) in the
-dotfiles repository root to track the files and directories it manages. Example:
+Slinky maintains a simple pipe-separated value file (`slinks.psv`) in the
+dotfiles repository root to track the files and directories it manages. Each
+line records the symlink location and the dotfile's path relative to the
+mappings file, prefixed with `./`. Example:
 
 ```txt
-vimrc|~/.vimrc
-config/nvim|~/.config/nvim
-emacs|~/.emacs
+~/.vimrc|./vimrc
+~/.config/nvim|./config/nvim
+~/.emacs|./emacs
 ```
 
 Combined, these patterns let you backup your dotfiles using your preferred
@@ -87,7 +95,7 @@ clean slate.
 2. Initialize a git repository in that directory: `cd ~/dotfiles && git init`
 3. Add your first dotfile: `slinky add ~/.vimrc`
 4. Commit and push the changes to a remote repo, including the generated
-`slinky.psv` file
+`slinks.psv` file
 
 That's it! To install your dotfiles onto another computer, read
 [Syncing multiple computers](#syncing-multiple-computers).
@@ -181,6 +189,12 @@ slinky uninstall                        # remove all managed symlinks
 
 ```sh
 slinky help                             # show the help message
+```
+
+### Version
+
+```sh
+slinky version                          # show the version
 ```
 
 ## Example repos
