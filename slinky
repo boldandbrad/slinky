@@ -2,11 +2,12 @@
 
 # slinky: simple dotfile symlink management
 # Requires:
-#   POSIX sh, awk, find, ln, mkdir, mv, rm, readlink, mktemp
+#   POSIX sh, awk, basename, cat, dirname, find, ln, mkdir, mv, rm, readlink,
+#   mktemp
 
 VERSION="1.0.0-dev"
 
-for command in awk find ln mkdir mv rm readlink mktemp; do
+for command in awk basename cat dirname find ln mkdir mv rm readlink mktemp; do
     command -v "$command" >/dev/null 2>&1 || {
         echo "Error: required command not found: $command" >&2
         exit 1

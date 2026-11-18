@@ -23,7 +23,10 @@ which ship by default on most modern Linux, macOS, and BSD systems:
 
 - `sh`
 - `awk`
-- `find` with `-maxdepth` and `-lname`
+- `basename`
+- `cat`
+- `dirname`
+- `find` with `-maxdepth`
 - `ln`
 - `mkdir`
 - `mv`
