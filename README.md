@@ -9,14 +9,37 @@ of them for easy install. That's it.
 
 - ✨ Simple: One command to add, install, drop, or uninstall dotfiles.
 - 🔒 Safe: Won't overwrite existing files without confirmation.
-- 📜 Git-friendly: Just a script and a map file - works with any VCS.
+- 📜 Git-friendly: Symlinked dotfiles work well with any VCS.
 - 🗂️ Flexible: Organize files however you want - by host, OS, or category.
 - 🔧 No config: Just works with your dotfiles repo.
-- 🐚 Portable: Single POSIX shell script with zero dependencies.
+- 🐚 Portable: Single POSIX `sh` script that relies on a small, documented set
+  of standard Unix utilities.
 
 ## Install
 
-Slinky supports any system that ships with a POSIX-compliant shell.
+### Dependencies
+
+Slinky targets POSIX `sh` and the utilities listed below. It is intended for
+Linux, macOS, and BSD.
+
+- `sh`
+- `awk`
+- `basename`
+- `cat`
+- `cp`
+- `dirname`
+- `find` with `-maxdepth`
+- `ln`
+- `mkdir`
+- `mv`
+- `rm`
+- `readlink`
+- `mktemp`
+
+These are common on modern Unix-like systems, but they are not guaranteed in
+minimal or strict POSIX-only environments. `find -maxdepth` is a common
+extension rather than a POSIX option, and `readlink`/`mktemp` are not part of
+older POSIX utility sets.
 
 ### Package manager
 
@@ -24,8 +47,9 @@ Slinky supports any system that ships with a POSIX-compliant shell.
 brew install boldandbrad/tap/slinky
 ```
 
-> If this project gains traction I may add slinky to other package managers in
-> the future.
+> Slinky is mostly a hobby project, but if it gains traction I may add it to
+> other package managers in the future. Feel free to
+> [open an issue](https://github.com/boldandbrad/slinky/issues).
 
 ### Manual
 
@@ -46,24 +70,42 @@ light wrapper around `mv` and `ln` that can do tricks.
 
 ```txt
 ~/.vimrc                                # Before: regular file
-~/.vimrc → ~/dotfiles/vimrc             # After: symlink
+~/.vimrc -> ~/dotfiles/vimrc            # After: symlink
 ```
 
 By default, slinky assumes your dotfiles repository is located at
 `$HOME/dotfiles`, but you can change this behavior by setting the `$DOTFILES`
 environment variable.
 
-Slinky maintains a simple pipe-separated value file (`slinky.psv`) in the
-dotfiles repository root to track the files and directories it manages. Example:
+Slinky maintains a simple pipe-separated value mapping file (`slinky-v1.psv`) in
+your dotfiles repository root to track the files and directories it manages.
+Each line records the symlink location and the dotfile's path relative to the
+mappings file, prefixed with `./`. Slinky tracks at most one link per dotfile.
+Paths containing `|`, a newline, or a carriage return cannot be stored in a
+mapping record and are rejected. Example:
 
 ```txt
-vimrc|~/.vimrc
-config/nvim|~/.config/nvim
-emacs|~/.emacs
+~/.vimrc|./vimrc
+~/.config/nvim|./config/nvim
+~/.emacs|./emacs
 ```
 
 Combined, these patterns let you backup your dotfiles using your preferred
 version control or cloud storage system for easy install on any machine.
+
+### Mapping file versioning
+
+The mapping file has its own format version, independent of the slinky release.
+The current format is version 1, stored in `slinky-v1.psv`. A new slinky release
+does not rename it unless the mapping format changes, which can happen in any
+release.
+
+On a format change, slinky migrates the file to a new name such as
+`slinky-v2.psv` and renames the old one to `slinky-v1.psv.bak`. Only the file
+matching its supported format is active; `.bak` files are ignored. If slinky
+finds a newer format but no active file it supports, it tells you to update
+slinky. Legacy `slinky.psv` files are migrated to `slinky-v1.psv` and backed up
+as `slinky-v0.psv.bak`.
 
 ## Getting started
 
@@ -80,7 +122,7 @@ clean slate.
 2. Initialize a git repository in that directory: `cd ~/dotfiles && git init`
 3. Add your first dotfile: `slinky add ~/.vimrc`
 4. Commit and push the changes to a remote repo, including the generated
-`slinky.psv` file
+`slinky-v1.psv` file
 
 That's it! To install your dotfiles onto another computer, read
 [Syncing multiple computers](#syncing-multiple-computers).
@@ -90,8 +132,7 @@ That's it! To install your dotfiles onto another computer, read
 Follow this guide if you have an existing symlink based dotfile repository and
 you'd like to migrate to slinky.
 
-1. Move your local repository to `~/dotfiles`, or set `$DOTFILES` to tell slinky
-where it is
+1. Set `$DOTFILES` to the location of your existing dotfiles repository
 2. Find your existing symlinks: `slinky find`
 3. Import them: `slinky import symlink1 symlink2 ...`
 4. Delete your previous dotfile manager
@@ -114,13 +155,19 @@ That's it!
 
 ## Usage
 
+All commands accept `-h`/`--help` and treat `--` as the end of options. Use `--`
+before a path that begins with `-`.
+
+Repository paths (`add -p`, `list -p`, `install -p`, `uninstall -p`, `move`, and
+`drop`) are relative to `$DOTFILES`. Absolute paths and paths that escape the
+repo are rejected.
+
 ### Add
 
 ```sh
 slinky add ~/.vimrc                     # add to dotfiles root
 slinky add ~/.vimrc ~/.bashrc           # add multiple at once
 slinky add -p editors ~/.config/nvim    # specify repo subdirectory
-slinky add ~/.vimrc -p editors          # flag can appear anywhere
 ```
 
 ### List
@@ -146,8 +193,9 @@ slinky drop config/nvim .vimrc          # drop multiple at once
 ### Find
 
 ```sh
-slinky find                             # search the user's home directory for untracked symlinks pointing to the dotfiles repo
+slinky find                             # search $HOME (3 levels deep) for untracked symlinks
 slinky find ~/.config                   # search in the specified directory
+slinky find -d 5 ~/.config              # search 5 levels deep
 ```
 
 ### Import
@@ -168,12 +216,19 @@ slinky install -p mac                   # only install dotfiles under the given 
 
 ```sh
 slinky uninstall                        # remove all managed symlinks
+slinky uninstall -p mac                 # only uninstall symlinks for dotfiles under the given subdirectory
 ```
 
 ### Help
 
 ```sh
 slinky help                             # show the help message
+```
+
+### Version
+
+```sh
+slinky version                          # show the version
 ```
 
 ## Example repos

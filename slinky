@@ -1,37 +1,273 @@
 #!/bin/sh
 
 # slinky: simple dotfile symlink management
+# Requires:
+#   POSIX sh, awk, basename, cat, cp, dirname, find, ln, mkdir, mv, rm,
+#   readlink, mktemp
 
-VERSION="0.3.0"
+VERSION="1.0.0-dev"
 
-DOTFILES="${DOTFILES:-$HOME/dotfiles}"
-if [ ! -d "$DOTFILES" ]; then
-  echo "Error: DOTFILES ('$DOTFILES') is not a directory or cannot be accessed." >&2
-  exit 1
-fi
+for command in awk basename cat cp dirname find ln mkdir mv rm readlink mktemp; do
+    command -v "$command" >/dev/null 2>&1 || {
+        echo "Error: required command not found: $command" >&2
+        exit 1
+    }
+done
 
-MAPPINGS_FILE="$DOTFILES/slinky.psv"
-[ -f "$MAPPINGS_FILE" ] || {
-  echo "" > "$MAPPINGS_FILE";
-  echo "Created '$MAPPINGS_FILE'"
-}
-
-tilde_expand() {
-  v="$1"
-  if [ "$v" = "~" ]; then
-    echo "$HOME"
+# Resolve an existing directory to its physical path.
+_canonical_dir() (
+  if cd "$1" 2>/dev/null; then
+    pwd -P
   else
-    rest=$(printf '%s' "$v" | sed 's#^~\/##')
-    if [ "$rest" != "$v" ]; then
-      echo "$HOME/$rest"
-    else
-      echo "$v"
-    fi
+    printf '%s\n' "$1"
   fi
+)
+
+HOME_CANONICAL=$(_canonical_dir "$HOME")
+DOTFILES="${DOTFILES:-$HOME/dotfiles}"
+case "$DOTFILES" in
+  /*) DOTFILES=$(_canonical_dir "$DOTFILES") ;;
+esac
+
+MAPPINGS_FORMAT_VERSION=1
+MAPPINGS_FILE="$DOTFILES/slinky-v$MAPPINGS_FORMAT_VERSION.psv"
+LEGACY_MAPPINGS_FILE="$DOTFILES/slinky.psv"
+LEGACY_BACKUP_FILE="$DOTFILES/slinky-v0.psv.bak"
+
+_absolute_path() (
+  path="$1"
+  case "$path" in
+    '~')    path=$HOME ;;
+    '~'/*)  path="$HOME/${path#\~/}" ;;
+    /*)     ;;
+    ./*)    path="$PWD/${path#./}" ;;
+    *)      path="$PWD/$path" ;;
+  esac
+
+  [ "$path" = / ] && { printf '/\n'; return 0; }
+
+  dir=$(dirname "$path")
+  base=$(basename "$path")
+  dir=$(_canonical_dir "$dir")
+  printf '%s/%s\n' "$dir" "$base"
+)
+
+_home_path() (
+  for home in "$HOME" "$HOME_CANONICAL"; do
+    [ -n "$home" ] || continue
+    case "$1" in
+      "$home"|"$home"/*) printf '~%s\n' "${1#"$home"}"; return 0 ;;
+    esac
+  done
+  printf '%s\n' "$1"
+)
+
+# Print the resolved absolute target of a symlink.
+_symlink_target() (
+  link=$1
+  target=$(readlink "$link") || return 1
+  case "$target" in
+    /*) _absolute_path "$target" ;;
+    *)  _absolute_path "$(dirname "$link")/$target" ;;
+  esac
+)
+
+_path_exists() {
+  [ -e "$1" ] || [ -L "$1" ]
 }
 
-help() {
-  cat <<'EOF'
+# Return true for blank or whitespace-only mapping lines.
+_is_blank_mapping() {
+  case "$1" in
+    *[![:space:]]*) return 1 ;;
+  esac
+  return 0
+}
+
+# Return true when a line contains a mapping delimiter. Comment lines do not.
+_has_mapping_delimiter() {
+  case "$1" in
+    *'|'*) return 0 ;;
+  esac
+  return 1
+}
+
+_find_mapping_by_dotfile() (
+  awk -F'|' -v path="$1" \
+    '$2 == path { print; exit }' "$MAPPINGS_FILE"
+)
+
+_count_mappings_by_dotfile() (
+  awk -F'|' -v path="$1" \
+    '$2 == path { count++ } END { print count + 0 }' "$MAPPINGS_FILE"
+)
+
+_find_mapping_by_link() (
+  awk -F'|' -v link="$1" \
+    '$1 == link { print; exit }' "$MAPPINGS_FILE"
+)
+
+_get_mapping_link() (
+  printf '%s\n' "${1%%|*}"
+)
+
+_get_mapping_dotfile() (
+  printf '%s\n' "${1#*|}"
+)
+
+_rewrite_mappings() (
+  dotfile=$1
+  replacement=$2
+  tmp=$(mktemp) || {
+    echo "Error: cannot create temporary file" >&2
+    return 1
+  }
+  if ! cp -p "$MAPPINGS_FILE" "$tmp"; then
+    rm -f "$tmp"
+    echo "Error: failed to preserve mappings file permissions" >&2
+    return 1
+  fi
+  if [ ! -w "$tmp" ]; then
+    rm -f "$tmp"
+    echo "Error: mappings file is not writable: $MAPPINGS_FILE" >&2
+    return 1
+  fi
+  if ! awk -F'|' -v s="$dotfile" -v r="$replacement" '
+    NF == 2 && $2 != s { print }
+    END { if (r != "") print r }
+  ' "$MAPPINGS_FILE" >"$tmp"; then
+    rm -f "$tmp"
+    echo "Error: failed to rewrite mappings" >&2
+    return 1
+  fi
+  if ! mv "$tmp" "$MAPPINGS_FILE"; then
+    rm -f "$tmp"
+    echo "Error: failed to update mappings" >&2
+    return 1
+  fi
+)
+
+_matches_filter() {
+  [ -z "$1" ] && return 0
+  case "$2" in
+    "$1"/*|"$1") return 0 ;;
+  esac
+  return 1
+}
+
+_check_mapping_path() (
+  cr=$(printf '\r')
+  nl='
+'
+  case "$1" in
+    *'|'*|*"$cr"*|*"$nl"*) return 1 ;;
+  esac
+)
+
+_normalize_dotfile_path() (
+  path="$1"
+  _check_mapping_path "$path" || return 1
+  case "$path" in
+    /*) return 1 ;;
+  esac
+
+  normalized=""
+  rest=$path
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      */*) part=${rest%%/*}; rest=${rest#*/} ;;
+      *)   part=$rest; rest="" ;;
+    esac
+    case "$part" in
+      ''|.) ;;
+      ..)
+        [ -n "$normalized" ] || return 1
+        normalized=${normalized%/*}
+        ;;
+      *) normalized=$normalized/$part ;;
+    esac
+  done
+
+  if [ -z "$normalized" ]; then
+    printf '.\n'
+  else
+    printf './%s\n' "${normalized#/}"
+  fi
+)
+
+# Normalize a user-supplied repo path, reporting invalid input.
+_normalize_repo_path() {
+  if ! _check_mapping_path "$1"; then
+    echo "Error: '$1' contains '|', a newline, or a carriage return, which cannot be stored in a mapping" >&2
+    return 1
+  fi
+  _normalize_dotfile_path "$1" && return 0
+  echo "Error: '$1' must be a relative path inside the dotfiles repo" >&2
+  return 1
+}
+
+_check_mappings_format() (
+  for file in "$DOTFILES"/slinky-v*.psv; do
+    [ -f "$file" ] || continue
+    version=${file##*/slinky-v}
+    version=${version%.psv}
+    case "$version" in ''|*[!0-9]*) continue ;; esac
+    [ "$version" -gt "$MAPPINGS_FORMAT_VERSION" ] || continue
+    if [ -f "$MAPPINGS_FILE" ]; then
+      echo "Warning: '$(_home_path "$file")' uses a newer mapping format; using '$(_home_path "$MAPPINGS_FILE")'." >&2
+      return 0
+    fi
+    echo "Error: '$(_home_path "$file")' uses a newer mapping format; update slinky to use this dotfiles repository." >&2
+    return 1
+  done
+)
+
+# Migrate a v0.3.0 "<dotfile>|<link>" mappings file to the current
+# "<link>|./dotfile" format.
+migrate_v0() (
+  if [ -s "$MAPPINGS_FILE" ]; then
+    echo "Warning: '$(_home_path "$LEGACY_MAPPINGS_FILE")' exists but '$(_home_path "$MAPPINGS_FILE")' is not empty; skipping migration." >&2
+    return 0
+  fi
+
+  if [ -e "$LEGACY_BACKUP_FILE" ]; then
+    echo "Error: backup file already exists: '$(_home_path "$LEGACY_BACKUP_FILE")'" >&2
+    return 1
+  fi
+
+  # The legacy format tolerated comments and older versions wrote a header, so
+  # drop them here. The original file is kept as a backup.
+  if ! awk -F'|' '
+    /^[[:space:]]*$/ { next }
+    /^[[:space:]]*#/ { next }
+    {
+      dotfile = $1
+      link = $2
+      sub(/^(\.\/)+/, "", dotfile)
+      sub(/\/+$/, "", dotfile)
+      if (NF != 2 || dotfile == "" || link == "") { bad = 1; next }
+      print link "|./" dotfile
+    }
+    END { exit bad }
+  ' "$LEGACY_MAPPINGS_FILE" > "$MAPPINGS_FILE"; then
+    rm -f "$MAPPINGS_FILE"
+    echo "Error: cannot migrate '$(_home_path "$LEGACY_MAPPINGS_FILE")'; expected '<dotfile>|<link>' records." >&2
+    return 1
+  fi
+
+  if ! mv "$LEGACY_MAPPINGS_FILE" "$LEGACY_BACKUP_FILE"; then
+    rm -f "$MAPPINGS_FILE"
+    echo "Error: failed to back up '$(_home_path "$LEGACY_MAPPINGS_FILE")'" >&2
+    return 1
+  fi
+
+  echo "Migrated mappings: $(_home_path "$LEGACY_MAPPINGS_FILE") -> $(_home_path "$MAPPINGS_FILE")"
+  echo "Backup saved: $(_home_path "$LEGACY_BACKUP_FILE") - validate that slinky works, then delete it."
+)
+
+help() (
+  if [ $# -eq 0 ]; then
+    cat <<'EOF'
 usage: slinky <command> [args]
 
 commands:
@@ -42,404 +278,713 @@ commands:
                                               repo and update its symlink
   drop <repo_rel_path>...                     Drop tracked dotfiles back to
                                               original locations
-  find [<path>]                               Find untracked symlinks to the
-                                              dotfiles repo
+  find [-d|--depth <n>] [<path>]              Find untracked symlinks to the
+                                              dotfiles repo (default: $HOME,
+                                              depth 3)
   import <path>...                            Import an untracked dotfile
                                               symlink
   install [-p|--path <repo_rel_path>]         Install symlinks for tracked
                                               dotfiles
-  uninstall                                   Uninstall tracked symlinks
+  uninstall [-p|--path <repo_rel_path>]       Uninstall tracked symlinks
   help|-h|--help                              Show this help
   version|-v|--version                        Show version
+
+All commands accept -h/--help. Use -- before paths beginning with '-'.
+Each dotfile can be tracked by only one link.
 EOF
+    return
+  fi
+
+  case "$1" in
+    add) echo "usage: slinky add [-p|--path <repo_rel_path>] <src>..." ;;
+    list) echo "usage: slinky list [-p|--path <repo_rel_path>]" ;;
+    move) echo "usage: slinky move <repo_rel_src> <repo_rel_tgt>" ;;
+    drop) echo "usage: slinky drop <repo_rel_path>..." ;;
+    find) echo "usage: slinky find [-d|--depth <n>] [<path>]" ;;
+    import) echo "usage: slinky import <path>..." ;;
+    install) echo "usage: slinky install [-p|--path <repo_rel_path>]" ;;
+    uninstall) echo "usage: slinky uninstall [-p|--path <repo_rel_path>]" ;;
+    help) echo "usage: slinky help" ;;
+    version) echo "usage: slinky version" ;;
+    *) echo "usage: slinky <command> [args]" ;;
+  esac
+)
+
+# Print a command's usage to stderr and exit.
+usage_error() {
+  help "$1" >&2
+  exit 1
 }
 
-add_dotfiles() {
-  input_path="$1"
+add_dotfile() (
+  source_path="$1"
   repo_rel_path="$2"
 
-  source_path="$(cd "$(dirname "$input_path")" && pwd)/$(basename "$input_path")"
+  source_path=$(_absolute_path "$source_path")
+  source_home_path=$(_home_path "$source_path")
+  if ! _check_mapping_path "$source_home_path"; then
+    echo "Cannot add '$source_home_path' to dotfiles: the path contains '|', a newline, or a carriage return" >&2
+    return 1
+  fi
+
+  if [ -n "$(_find_mapping_by_link "$source_home_path")" ]; then
+    echo "Cannot add '$source_home_path' to dotfiles: it is already tracked" >&2
+    return 1
+  fi
+
+  if [ -L "$source_path" ]; then
+    echo "Cannot add '$source_home_path' to dotfiles: it is a symlink. Try 'slinky import'" >&2
+    return 1
+  fi
+
   if [ ! -e "$source_path" ]; then
-    echo "Cannot add '$source_path' to dotfiles: does not exist" >&2; return
+    echo "Cannot add '$source_home_path' to dotfiles: does not exist" >&2
+    return 1
   fi
 
   base=$(basename "$source_path")
+  dotfile_rel_path=$(_normalize_repo_path "${repo_rel_path:+$repo_rel_path/}$base") ||
+    return 1
+  dotfile_path="$DOTFILES/${dotfile_rel_path#./}"
+  mapping_entry="$source_home_path|$dotfile_rel_path"
 
-  dest_path=""
-  mapping_entry=""
-  home_tgt=""
-  case "$source_path" in
-    "$HOME"*)
-      rel_path="${source_path#"$HOME"}"
-      home_tgt="~${rel_path}"
-      ;;
-    *)
-      home_tgt="$source_path"
-      ;;
-  esac
-
-  if [ -n "$repo_rel_path" ]; then
-    norm_repo_rel="${repo_rel_path%/}"
-    if [ -n "$norm_repo_rel" ]; then
-      dest_path="$DOTFILES/$norm_repo_rel/$base"
-      mapping_entry="$norm_repo_rel/$base|$home_tgt"
-    else
-      dest_path="$DOTFILES/$base"
-      mapping_entry="$base|$home_tgt"
-    fi
-  else
-    dest_path="$DOTFILES/$base"
-    mapping_entry="$base|$home_tgt"
+  existing_mapping=$(_find_mapping_by_dotfile "$dotfile_rel_path")
+  if [ -n "$existing_mapping" ]; then
+    existing_link=$(_get_mapping_link "$existing_mapping")
+    echo "Cannot add '$source_home_path' to dotfiles: '$dotfile_rel_path' is already tracked by '$existing_link'" >&2
+    return 1
   fi
 
-  if [ -e "$dest_path" ]; then
-    echo "Cannot add '$source_path' to dotfiles: '$dest_path' already exists" >&2; return
+  if _path_exists "$dotfile_path"; then
+    echo "Cannot add '$source_home_path' to dotfiles: '$dotfile_path' already exists" >&2
+    return 1
   fi
 
-  dest_dir="$(dirname "$dest_path")"
-  if [ ! -e "$dest_path" ]; then
-    mkdir -p "$dest_dir"
+  dest_dir="$(dirname "$dotfile_path")"
+  if ! mkdir -p "$dest_dir"; then
+    echo "Error: Failed to create directory '$dest_dir'" >&2
+    return 1
   fi
 
-  mv "$source_path" "$dest_path"
-  ln -sn "$dest_path" "$source_path"
+  if ! mv "$source_path" "$dotfile_path"; then
+    echo "Error: Failed to move $source_home_path to $dotfile_path" >&2
+    return 1
+  fi
 
-  printf "%s\n" "$mapping_entry" >> "$MAPPINGS_FILE"
+  if ! ln -s "$dotfile_path" "$source_path"; then
+    mv "$dotfile_path" "$source_path"
+    echo "Error: Failed to create symlink $source_home_path" >&2
+    return 1
+  fi
 
-  echo "Added dotfile '$dest_path' via symlink at '$source_path'"
-}
+  if ! printf "%s\n" "$mapping_entry" >> "$MAPPINGS_FILE"; then
+    rm -f "$source_path"
+    mv "$dotfile_path" "$source_path"
+    echo "Error: Failed to write $source_home_path record to $MAPPINGS_FILE" >&2
+    return 1
+  fi
 
-list_dotfiles() {
+  echo "Added dotfile: $source_home_path -> $dotfile_rel_path"
+)
+
+list_dotfiles() (
   filter_path="$1"
-  while IFS= read -r line; do
-    case "$line" in
-      ''|'#'*) continue ;;
-    esac
-    src=$(printf '%s' "$line" | cut -d'|' -f1)
-    tgt=$(printf '%s' "$line" | cut -d'|' -f2-)
-
-    if [ -n "$filter_path" ]; then
-      case "$src" in
-        "$filter_path"/*) ;;
-        "$filter_path") ;;
-        *) continue ;;
-      esac
+  while IFS= read -r mapping; do
+    _is_blank_mapping "$mapping" && continue
+    if ! _has_mapping_delimiter "$mapping"; then
+      echo "Warning: skipping invalid mapping: $mapping" >&2
+      continue
+    fi
+    link_path=$(_home_path "$(_get_mapping_link "$mapping")")
+    if ! dotfile_path=$(_normalize_dotfile_path "$(_get_mapping_dotfile "$mapping")"); then
+      echo "Warning: skipping invalid mapping: $mapping" >&2
+      continue
     fi
 
-    echo "$src > $tgt"
-  done < "$MAPPINGS_FILE"
-}
+    _matches_filter "$filter_path" "$dotfile_path" || continue
 
-move_dotfile() {
+    echo "$link_path -> $dotfile_path"
+  done < "$MAPPINGS_FILE"
+)
+
+move_dotfile() (
   source_path="$1"
   dest_path="$2"
-  source_abs_path="$DOTFILES/$source_path"
-  dest_abs_path="$DOTFILES/$dest_path"
+  source_rel_path=$(_normalize_repo_path "$source_path") || return 1
+  dest_rel_path=$(_normalize_repo_path "$dest_path") || return 1
+  source_abs_path="$DOTFILES/${source_rel_path#./}"
+  dest_abs_path="$DOTFILES/${dest_rel_path#./}"
 
-  if [ ! -e "$source_abs_path" ]; then
-    echo "Cannot move '$source_abs_path': it does not exist" >&2; return
+  if ! _path_exists "$source_abs_path"; then
+    echo "Cannot move '$source_abs_path': it does not exist" >&2
+    return 1
   fi
 
-  mapping=$(awk -v s="$source_path" -F'|' '$1 == s { print; exit }' "$MAPPINGS_FILE")
+  mapping_count=$(_count_mappings_by_dotfile "$source_rel_path")
+  if [ "$mapping_count" -gt 1 ]; then
+    echo "Cannot move dotfile '$source_abs_path': multiple links are tracked for it" >&2
+    return 1
+  fi
+
+  mapping=$(_find_mapping_by_dotfile "$source_rel_path")
   if [ -z "$mapping" ]; then
-    echo "Cannot move dotfile '$source_path': no mapping found in '$MAPPINGS_FILE'." >&2; return
-  fi
-  link_path=$(printf '%s' "$mapping" | cut -d'|' -f2-)
-  link_abs_path="$(tilde_expand "$link_path")"
-
-  if [ -e "$dest_abs_path" ]; then
-    echo "Cannot move '$source_abs_path' to '$dest_abs_path': it already exists" >&2; return
+    echo "Cannot move dotfile '$source_abs_path': no mapping found in '$MAPPINGS_FILE'." >&2
+    return 1
   fi
 
-  mv "$source_abs_path" "$dest_abs_path"
+  link_path=$(_get_mapping_link "$mapping")
+  link_abs_path=$(_absolute_path "$link_path")
 
+  if [ "$dest_rel_path" = "$source_rel_path" ]; then
+    echo "Cannot move '$source_abs_path': source and destination are the same" >&2
+    return 1
+  fi
+
+  existing_mapping=$(_find_mapping_by_dotfile "$dest_rel_path")
+  if [ -n "$existing_mapping" ]; then
+    existing_link=$(_get_mapping_link "$existing_mapping")
+    echo "Cannot move dotfile '$source_abs_path': destination '$dest_abs_path' is already tracked by '$existing_link'" >&2
+    return 1
+  fi
+
+  if _path_exists "$dest_abs_path"; then
+    echo "Cannot move '$source_abs_path' to '$dest_abs_path': it already exists" >&2
+    return 1
+  fi
+
+  link_home_path=$(_home_path "$link_abs_path")
+  if _path_exists "$link_abs_path" && [ ! -L "$link_abs_path" ]; then
+    echo "Cannot move '$source_abs_path': '$link_home_path' is not a symlink" >&2
+    return 1
+  fi
+
+  if ! mkdir -p "$(dirname "$dest_abs_path")"; then
+    echo "Error: Failed to create destination directory for '$dest_abs_path'" >&2
+    return 1
+  fi
+
+  link_dir=$(dirname "$link_abs_path")
+  if ! mkdir -p "$link_dir"; then
+    echo "Error: Failed to create directory '$(_home_path "$link_dir")'" >&2
+    return 1
+  fi
+
+  if ! mv "$source_abs_path" "$dest_abs_path"; then
+    echo "Error: Failed to move $source_abs_path to $dest_abs_path" >&2
+    return 1
+  fi
+
+  link_existed=0
   if [ -L "$link_abs_path" ]; then
-    rm "$link_abs_path"
-  fi
-  ln -sn "$dest_abs_path" "$link_abs_path"
-
-  tmp=$(mktemp)
-  awk -v s="$source_path" -F'|' '$1 != s { print }' "$MAPPINGS_FILE" > "$tmp" && mv "$tmp" "$MAPPINGS_FILE"
-  mapping_entry="$dest_path|$link_path"
-  printf "%s\n" "$mapping_entry" >> "$MAPPINGS_FILE"
-
-  echo "Moved dotfile '$source_path' to '$dest_path' and updated symlink"
-}
-
-drop_dotfiles() {
-  repo_rel_path="$1"
-
-  line=$(awk -v s="$repo_rel_path" -F'|' '$1 == s { print; exit }' "$MAPPINGS_FILE")
-  if [ -z "$line" ]; then
-    echo "Cannot drop dotfile '$repo_rel_path': no mapping found in '$MAPPINGS_FILE'." >&2; return
-  fi
-  src=$(printf '%s' "$line" | cut -d'|' -f1)
-  tgt=$(printf '%s' "$line" | cut -d'|' -f2-)
-
-  abs_src="$DOTFILES/$src"
-  abs_tgt="$(tilde_expand "$tgt")"
-
-  if [ -L "$abs_tgt" ] || [ -e "$abs_tgt" ]; then
-    rm -f "$abs_tgt" 2>/dev/null
+    if ! rm "$link_abs_path"; then
+      mv "$dest_abs_path" "$source_abs_path"
+      echo "Error: Failed to remove existing symlink '$link_home_path'" >&2
+      return 1
+    fi
+    link_existed=1
   fi
 
-  mkdir -p "$(dirname "$abs_tgt")"
-  if [ -e "$abs_src" ]; then
-    mv "$abs_src" "$abs_tgt"
-    echo "Dropped dotfile '$repo_rel_path' and moved it back to '$abs_tgt'"
-  else
-    echo "Cannot drop dotfile '$repo_rel_path': expected dotfiles content not found at '$abs_src'" >&2
+  if ! ln -s "$dest_abs_path" "$link_abs_path"; then
+    mv "$dest_abs_path" "$source_abs_path"
+    if [ "$link_existed" = 1 ]; then
+      ln -s "$source_abs_path" "$link_abs_path" 2>/dev/null || true
+    fi
+    echo "Error: Failed to create new symlink $link_home_path" >&2
+    return 1
   fi
 
-  tmp=$(mktemp)
-  awk -v s="$repo_rel_path" -F'|' '$1 != s { print }' "$MAPPINGS_FILE" > "$tmp" && mv "$tmp" "$MAPPINGS_FILE"
-}
+  if ! _rewrite_mappings "$source_rel_path" "$link_path|$dest_rel_path"; then
+    mv "$dest_abs_path" "$source_abs_path"
+    rm -f "$link_abs_path"
+    if [ "$link_existed" = 1 ]; then
+      ln -s "$source_abs_path" "$link_abs_path" 2>/dev/null || true
+    fi
+    return 1
+  fi
 
-find_links() {
+  echo "Moved dotfile: $source_rel_path to $dest_rel_path and updated symlink"
+)
+
+drop_dotfile() (
+  dotfile_path="$1"
+  dotfile_rel_path=$(_normalize_repo_path "$dotfile_path") || return 1
+  dotfile_abs_path="$DOTFILES/${dotfile_rel_path#./}"
+
+  mapping_count=$(_count_mappings_by_dotfile "$dotfile_rel_path")
+  if [ "$mapping_count" -gt 1 ]; then
+    echo "Cannot drop '$dotfile_abs_path': multiple links are tracked for it" >&2
+    return 1
+  fi
+
+  mapping=$(_find_mapping_by_dotfile "$dotfile_rel_path")
+  if [ -z "$mapping" ]; then
+    echo "Skipped, dotfile not tracked: $dotfile_abs_path" >&2
+    return 1
+  fi
+
+  if ! _path_exists "$dotfile_abs_path"; then
+    echo "Cannot drop '$dotfile_abs_path': dotfile not found" >&2
+    return 1
+  fi
+
+  link_path=$(_get_mapping_link "$mapping")
+  link_abs_path=$(_absolute_path "$link_path")
+  link_home_path=$(_home_path "$link_abs_path")
+  link_existed=0
+  if [ -L "$link_abs_path" ]; then
+    rm "$link_abs_path" || return 1
+    link_existed=1
+  elif [ -e "$link_abs_path" ]; then
+    echo "Refusing to replace existing non-symlink: $link_home_path" >&2
+    return 1
+  fi
+
+  link_dir=$(dirname "$link_abs_path")
+  if ! mkdir -p "$link_dir"; then
+    echo "Error: Failed to create directory '$(_home_path "$link_dir")'" >&2
+    return 1
+  fi
+
+  if ! mv "$dotfile_abs_path" "$link_abs_path"; then
+    if [ "$link_existed" = 1 ]; then
+      ln -s "$dotfile_abs_path" "$link_abs_path" 2>/dev/null || true
+    fi
+    echo "Error: Failed to move $dotfile_abs_path to $link_home_path" >&2
+    return 1
+  fi
+
+  if ! _rewrite_mappings "$dotfile_rel_path" ""; then
+    mv "$link_abs_path" "$dotfile_abs_path"
+    if [ "$link_existed" = 1 ]; then
+      ln -s "$dotfile_abs_path" "$link_abs_path" 2>/dev/null || true
+    fi
+    return 1
+  fi
+
+  echo "Dropped dotfile: $dotfile_rel_path to $link_home_path"
+)
+
+find_links() (
   search_path="$1"
+  depth="${2:-3}"
   if [ -z "$search_path" ]; then
-    search_path=~
+    search_path=$HOME
   fi
 
   if [ ! -d "$search_path" ]; then
-    echo "Cannot search in '$search_path': it is not a directory" >&2; return
+    echo "Cannot search in '$(_home_path "$search_path")': it is not a directory" >&2
+    return 1
   fi
 
-  links=$(find "$search_path" -maxdepth 3 -type l -lname "$DOTFILES*" 2>/dev/null)
-  while read -r link; do
-    repo_rel_path=""
-    while IFS= read -r mapping; do
-      src=$(printf '%s' "$mapping" | cut -d'|' -f1)
-      tgt=$(printf '%s' "$mapping" | cut -d'|' -f2-)
-      abs_tgt="$(tilde_expand "$tgt")"
+  found_links=$(find "$search_path" -maxdepth "$depth" -type l 2>/dev/null)
+  [ -n "$found_links" ] || return 0
+  while read -r found_link; do
+    found_link_dest=$(_symlink_target "$found_link") || continue
+    case "$found_link_dest" in
+      "$DOTFILES"/*) ;;
+      *) continue ;;
+    esac
 
-      if [ "$link" = "$abs_tgt" ]; then
-        repo_rel_path="$src"
+    found_link_abs=$(_absolute_path "$found_link")
+    tracked_dotfile=""
+    while IFS= read -r mapping; do
+      _is_blank_mapping "$mapping" && continue
+      _has_mapping_delimiter "$mapping" || continue
+
+      link_path=$(_get_mapping_link "$mapping")
+      link_abs_path=$(_absolute_path "$link_path")
+      dotfile_path=$(_get_mapping_dotfile "$mapping")
+      if [ "$found_link_abs" = "$link_abs_path" ]; then
+        tracked_dotfile="$dotfile_path"
         break
       fi
     done < "$MAPPINGS_FILE"
 
-    if [ -z "$repo_rel_path" ]; then
-      dest=$(readlink "$link")
-      echo "$link > $dest"
+    if [ -z "$tracked_dotfile" ]; then
+      found_dotfile=$(_normalize_dotfile_path "${found_link_dest#"$DOTFILES"/}") ||
+        found_dotfile=$found_link_dest
+      echo "$(_home_path "$found_link_abs") -> $found_dotfile"
     fi
   done << EOF
-$links
+$found_links
 EOF
-}
+)
 
-import_links() {
+import_link() (
   link_path="$1"
+  link_path=$(_absolute_path "$link_path")
   if [ ! -L "$link_path" ]; then
-    echo "Cannot import '$link_path': it is not a valid symlink" >&2; return
+    echo "Cannot import '$(_home_path "$link_path")': it is not a valid symlink" >&2
+    return 1
   fi
 
-  link_dest=$(readlink "$link_path")
+  link_dest=$(_symlink_target "$link_path")
   case "$link_dest" in
-    "$DOTFILES"*)
-      repo_rel_path="${link_dest#"$DOTFILES/"}"
+    "$DOTFILES"/*)
+      dotfile_path=${link_dest#"$DOTFILES"/}
+      ;;
+    "$DOTFILES")
+      echo "Cannot import repository directory itself" >&2
+      return 1
       ;;
     *)
-      echo "Cannot import symlink '$link_path': it does not point to the dotfiles repo" >&2; return
+      echo "Cannot import symlink '$(_home_path "$link_path")': it does not point to the dotfiles repo" >&2
+      return 1
       ;;
   esac
 
-  case "$link_path" in
-    "$HOME"*)
-      rel_path="${link_path#"$HOME"}"
-      link_short_path="~${rel_path}"
-      ;;
-    *)
-      link_short_path="$source_path"
-      ;;
-  esac
-
-  mapping=$(awk -v s="$link_short_path" -F'|' '$2 == s { print; exit }' "$MAPPINGS_FILE")
-  if [ -n "$mapping" ]; then
-    echo "Cannot import symlink '$link_path': it is already tracked" >&2; return
+  link_home_path=$(_home_path "$link_path")
+  if ! _check_mapping_path "$link_home_path"; then
+    echo "Cannot import symlink '$link_home_path': the path contains '|', a newline, or a carriage return" >&2
+    return 1
+  fi
+  if ! _check_mapping_path "$dotfile_path"; then
+    echo "Cannot import symlink '$link_home_path': its target contains '|', a newline, or a carriage return" >&2
+    return 1
+  fi
+  if ! dotfile_rel_path=$(_normalize_dotfile_path "$dotfile_path"); then
+    echo "Cannot import symlink '$link_home_path': its target is outside the dotfiles repo" >&2
+    return 1
+  fi
+  if [ -n "$(_find_mapping_by_link "$link_home_path")" ]; then
+    echo "Cannot import symlink '$link_home_path': it is already tracked" >&2
+    return 1
   fi
 
-  mapping_entry="$repo_rel_path|$link_short_path"
-  printf "%s\n" "$mapping_entry" >> "$MAPPINGS_FILE"
+  existing_mapping=$(_find_mapping_by_dotfile "$dotfile_rel_path")
+  if [ -n "$existing_mapping" ]; then
+    existing_link=$(_get_mapping_link "$existing_mapping")
+    echo "Cannot import symlink '$link_home_path': '$dotfile_rel_path' is already tracked by '$existing_link'" >&2
+    return 1
+  fi
 
-  echo "Imported dotfile symlink '$link_path'"
+  mapping_entry="$link_home_path|$dotfile_rel_path"
+  if ! printf "%s\n" "$mapping_entry" >> "$MAPPINGS_FILE"; then
+    echo "Error: Failed to write $link_home_path record to $MAPPINGS_FILE" >&2
+    return 1
+  fi
+
+  echo "Imported dotfile symlink: $link_home_path -> $dotfile_rel_path"
+)
+
+install_links() (
+  filter_path="$1"
+  install_status=0
+  while IFS= read -r mapping; do
+    _is_blank_mapping "$mapping" && continue
+    if ! _has_mapping_delimiter "$mapping"; then
+      echo "Warning: skipping invalid mapping: $mapping" >&2
+      install_status=1
+      continue
+    fi
+    link_path=$(_get_mapping_link "$mapping")
+    if ! dotfile_path=$(_normalize_dotfile_path "$(_get_mapping_dotfile "$mapping")"); then
+      echo "Warning: skipping invalid mapping: $mapping" >&2
+      install_status=1
+      continue
+    fi
+
+    _matches_filter "$filter_path" "$dotfile_path" || continue
+
+    dotfile_abs_path="$DOTFILES/${dotfile_path#./}"
+    if [ ! -e "$dotfile_abs_path" ]; then
+      echo "Skipped, dotfile not found: $dotfile_abs_path" >&2
+      install_status=1
+      continue
+    fi
+
+    link_abs_path=$(_absolute_path "$link_path")
+    if [ -L "$link_abs_path" ]; then
+      link_target=$(_symlink_target "$link_abs_path")
+      if [ "$link_target" = "$dotfile_abs_path" ]; then
+        echo "Already installed: $(_home_path "$link_abs_path")"
+      elif [ -e "$link_abs_path" ]; then
+        echo "Conflict, symlink points elsewhere: $(_home_path "$link_abs_path") -> $link_target" >&2
+        install_status=1
+      else
+        echo "Dangling symlink: $(_home_path "$link_abs_path") -> $link_target" >&2
+        install_status=1
+      fi
+      continue
+    fi
+
+    if [ -e "$link_abs_path" ]; then
+      echo "Conflict, path exists and is not a symlink: $(_home_path "$link_abs_path")" >&2
+      install_status=1
+      continue
+    fi
+
+    link_dir="$(dirname "$link_abs_path")"
+    if ! mkdir -p "$link_dir"; then
+      echo "Error: Failed to create directory '$(_home_path "$link_dir")'" >&2
+      install_status=1
+      continue
+    fi
+
+    if ! ln -s "$dotfile_abs_path" "$link_abs_path"; then
+      echo "Error: Failed to create symlink $(_home_path "$link_abs_path")" >&2
+      install_status=1
+      continue
+    fi
+
+    echo "Created symlink: $(_home_path "$link_abs_path")"
+  done < "$MAPPINGS_FILE"
+  return "$install_status"
+)
+
+uninstall_links() (
+  filter_path="$1"
+  uninstall_status=0
+  while IFS= read -r mapping; do
+    _is_blank_mapping "$mapping" && continue
+    if ! _has_mapping_delimiter "$mapping"; then
+      echo "Warning: skipping invalid mapping: $mapping" >&2
+      uninstall_status=1
+      continue
+    fi
+    link_path=$(_get_mapping_link "$mapping")
+    if ! dotfile_path=$(_normalize_dotfile_path "$(_get_mapping_dotfile "$mapping")"); then
+      echo "Warning: skipping invalid mapping: $mapping" >&2
+      uninstall_status=1
+      continue
+    fi
+
+    _matches_filter "$filter_path" "$dotfile_path" || continue
+
+    link_abs_path=$(_absolute_path "$link_path")
+    if [ -L "$link_abs_path" ]; then
+      if rm "$link_abs_path"; then
+        echo "Removed symlink: $(_home_path "$link_abs_path")"
+      else
+        uninstall_status=1
+      fi
+    elif [ -e "$link_abs_path" ]; then
+      echo "Refusing to remove existing non-symlink: $(_home_path "$link_abs_path")" >&2
+      uninstall_status=1
+    fi
+  done < "$MAPPINGS_FILE"
+  return "$uninstall_status"
+)
+
+# Print command usage and exit if -h/--help appears before --.
+_cmd_help() {
+  _cmd=$1
+  shift
+  for arg in "$@"; do
+    case "$arg" in
+      --) return 0 ;;
+      -h|--help) help "$_cmd"; exit 0 ;;
+    esac
+  done
 }
 
-install_links() {
-  filter_path="$1"
-  echo "Installing dotfile symlinks from '$MAPPINGS_FILE'"
+# Reject option-like operands unless -- comes first.
+_check_operands() {
+  _cmd=$1
+  shift
+  [ "$1" = "--" ] && return 0
+  for arg in "$@"; do
+    case "$arg" in -*) usage_error "$_cmd" ;; esac
+  done
+}
 
-  while IFS= read -r line; do
-    case "$line" in
-      ''|'#'* ) continue ;;
-    esac
-
-    src=$(printf '%s' "$line" | cut -d'|' -f1)
-    tgt=$(printf '%s' "$line" | cut -d'|' -f2-)
-
-    if [ -n "$filter_path" ]; then
-      case "$src" in
-        "$filter_path"/*) ;;
-        "$filter_path") ;;
-        *) continue ;;
+_parse_filter() {
+  _cmd=$1
+  shift
+  filter_path=""
+  path_next=0
+  while [ $# -gt 0 ]; do
+    if [ "$path_next" = 1 ]; then
+      case "$1" in ''|-*) usage_error "$_cmd" ;; esac
+      filter_path=$1
+      path_next=0
+    else
+      case "$1" in
+        --) [ $# -eq 1 ] || usage_error "$_cmd" ;;
+        -p|--path)
+          [ -z "$filter_path" ] || usage_error "$_cmd"
+          path_next=1
+          ;;
+        *) usage_error "$_cmd" ;;
       esac
     fi
-
-    abs_src="$DOTFILES/$src"
-    abs_tgt="$(tilde_expand "$tgt")"
-    if [ ! -e "$abs_src" ]; then
-      echo "  Source not found: '$abs_src'" >&2
-      continue
-    fi
-
-    if [ -e "$abs_tgt" ] || [ -L "$abs_tgt" ]; then
-      echo "  Target exists: '$abs_tgt'" >&2
-      continue
-    fi
-
-    mkdir -p "$(dirname "$abs_tgt")"
-    ln -s "$abs_src" "$abs_tgt" || echo "  Failed linking $abs_src > $abs_tgt" >&2
-  done < "$MAPPINGS_FILE"
+    shift
+  done
+  [ "$path_next" = 0 ] || usage_error "$_cmd"
+  if [ -n "$filter_path" ]; then
+    filter_path=$(_normalize_repo_path "$filter_path") || exit 1
+  fi
 }
 
-uninstall_links() {
-  while IFS= read -r line; do
-    case "$line" in ''|'#'* ) continue ;;
-    esac
-    src=$(printf '%s' "$line" | cut -d'|' -f1)
-    tgt=$(printf '%s' "$line" | cut -d'|' -f2-)
-    abs_tgt="$(tilde_expand "$tgt")"
-    if [ -L "$abs_tgt" ] || [ -e "$abs_tgt" ]; then
-      rm -f "$abs_tgt" 2>/dev/null
-    fi
-  done < "$MAPPINGS_FILE"
+# Validate DOTFILES and prepare the mappings file for commands that need it.
+init_repo() {
+  case "$DOTFILES" in
+    /) echo "Error: DOTFILES must not be root: $DOTFILES" >&2; exit 1 ;;
+    /*) ;;
+    *) echo "Error: DOTFILES must be an absolute path: $DOTFILES" >&2; exit 1 ;;
+  esac
+  if [ ! -d "$DOTFILES" ]; then
+    echo "Error: '$DOTFILES' is not a directory or cannot be accessed." >&2
+    exit 1
+  fi
 
-  echo "Uninstalled dotfile symlinks tracked in $MAPPINGS_FILE by deleting them"
+  _check_mappings_format || exit 1
+  if [ -f "$LEGACY_MAPPINGS_FILE" ]; then
+    migrate_v0 || exit 1
+  fi
+  [ -f "$MAPPINGS_FILE" ] || : > "$MAPPINGS_FILE"
 }
 
+status=0
 case "$1" in
   add)
     shift
+    _cmd_help add "$@"
     repo_rel_path=""
+    path_next=0
+    has_source=0
+    end_options=0
+    for arg in "$@"; do
+      if [ "$path_next" = 1 ]; then
+        case "$arg" in ''|-*) usage_error add ;; esac
+        repo_rel_path=$arg
+        path_next=0
+        continue
+      fi
+      if [ "$end_options" = 1 ]; then
+        has_source=1
+        continue
+      fi
+      case "$arg" in
+        --) end_options=1 ;;
+        -p|--path)
+          [ -z "$repo_rel_path" ] || usage_error add
+          path_next=1
+          ;;
+        -*) usage_error add ;;
+        *) has_source=1 ;;
+      esac
+    done
+    [ "$path_next" = 0 ] || usage_error add
+    [ "$has_source" = 1 ] || usage_error add
+
+    if [ -n "$repo_rel_path" ]; then
+      repo_rel_path=$(_normalize_repo_path "$repo_rel_path") || exit 1
+    fi
+
+    init_repo
+
     while [ $# -gt 0 ]; do
       case "$1" in
-        -p|--path)
-          if [ -n "$2" ] && [ "${2#-}" = "$2" ]; then
-            repo_rel_path="$2"
-            shift 2
-          else
-            echo "Error: -p/--path requires a path argument" >&2
-            exit 1
-          fi
-          ;;
-        -*)
-          echo "Error: Unknown option '$1'" >&2
-          exit 1
-          ;;
-        *)
-          add_dotfiles "$1" "$repo_rel_path"
-          shift
-          ;;
+        -p|--path) shift 2 ;;
+        --) shift; break ;;
+        *) add_dotfile "$1" "$repo_rel_path" || status=1; shift ;;
       esac
+    done
+    for arg in "$@"; do
+      add_dotfile "$arg" "$repo_rel_path" || status=1
     done
     ;;
   list)
     shift
-    filter_path=""
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -p|--path)
-          if [ -n "$2" ] && [ "${2#-}" = "$2" ]; then
-            filter_path="$2"
-            shift 2
-          else
-            echo "Error: -p/--path requires a path argument" >&2
-            exit 1
-          fi
-          ;;
-        -*)
-          echo "Error: Unknown option '$1'" >&2
-          exit 1
-          ;;
-        *)
-          echo "Error: Unknown argument '$1'" >&2
-          exit 1
-          ;;
-      esac
-    done
-    list_dotfiles "$filter_path"
+    _cmd_help list "$@"
+    _parse_filter list "$@"
+    init_repo
+    list_dotfiles "$filter_path" || status=1
     ;;
   move)
     shift
-    if [ $# -eq 2 ]; then
-      move_dotfile "$1" "$2"
-    else
-      help
-    fi
+    _cmd_help move "$@"
+    _check_operands move "$@"
+    [ "$1" = "--" ] && shift
+    [ $# -eq 2 ] || usage_error move
+    init_repo
+    move_dotfile "$1" "$2" || status=1
     ;;
   drop)
     shift
-    if [ $# -ge 1 ]; then
-      for repo_rel_path in "$@"; do
-        drop_dotfiles "$repo_rel_path"
-      done
-    else
-      help
-    fi
+    _cmd_help drop "$@"
+    _check_operands drop "$@"
+    [ "$1" = "--" ] && shift
+    [ $# -ge 1 ] || usage_error drop
+    init_repo
+    for repo_rel_path in "$@"; do
+      drop_dotfile "$repo_rel_path" || status=1
+    done
     ;;
   find)
     shift
-    if [ $# -eq 1 ]; then
-      find_links "$1"
-    elif [ $# -eq 0 ]; then
-      find_links
-    else
-      help
-    fi
+    _cmd_help find "$@"
+    depth=3
+    search_path=""
+    depth_next=0
+    end_options=0
+    for arg in "$@"; do
+      if [ "$depth_next" = 1 ]; then
+        case "$arg" in ''|*[!0-9]*) usage_error find ;; esac
+        depth=$arg
+        depth_next=0
+        continue
+      fi
+      if [ "$end_options" = 1 ]; then
+        [ -z "$search_path" ] || usage_error find
+        search_path=$arg
+        continue
+      fi
+      case "$arg" in
+        --) end_options=1 ;;
+        -d|--depth) depth_next=1 ;;
+        -*) usage_error find ;;
+        *)
+          [ -z "$search_path" ] || usage_error find
+          search_path=$arg
+          ;;
+      esac
+    done
+    [ "$depth_next" = 0 ] || usage_error find
+    init_repo
+    find_links "$search_path" "$depth" || status=1
     ;;
   import)
     shift
-    while [ $# -gt 0 ]; do
-      import_links "$1"
-      shift
+    _cmd_help import "$@"
+    _check_operands import "$@"
+    [ "$1" = "--" ] && shift
+    [ $# -ge 1 ] || usage_error import
+    init_repo
+    for arg in "$@"; do
+      import_link "$arg" || status=1
     done
     ;;
   install)
     shift
-    filter_path=""
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -p|--path)
-          if [ -n "$2" ] && [ "${2#-}" = "$2" ]; then
-            filter_path="$2"
-            shift 2
-          else
-            echo "Error: -p/--path requires a path argument" >&2
-            exit 1
-          fi
-          ;;
-        -*)
-          echo "Error: Unknown option '$1'" >&2
-          exit 1
-          ;;
-        *)
-          echo "Error: Unknown argument '$1'" >&2
-          exit 1
-          ;;
-      esac
-    done
-    install_links "$filter_path"
+    _cmd_help install "$@"
+    _parse_filter install "$@"
+    init_repo
+    install_links "$filter_path" || status=1
     ;;
   uninstall)
-    uninstall_links
+    shift
+    _cmd_help uninstall "$@"
+    _parse_filter uninstall "$@"
+    init_repo
+    uninstall_links "$filter_path" || status=1
     ;;
   help|"-h"|"--help")
+    shift
+    case "$1" in --|-h|--help) shift ;; esac
+    [ $# -eq 0 ] || usage_error help
     help
     ;;
   version|"-v"|"--version")
+    shift
+    _cmd_help version "$@"
+    [ "$1" = "--" ] && shift
+    [ $# -eq 0 ] || usage_error version
     echo "slinky version $VERSION"
     ;;
   *)
-    help
+    usage_error "$1"
     ;;
 esac
+exit "$status"
