@@ -192,7 +192,7 @@ migrate_v0() (
     return 1
   fi
 
-  echo "Migrated mappings: $(_home_path "$LEGACY_MAPPINGS_FILE") > $(_home_path "$MAPPINGS_FILE")"
+  echo "Migrated mappings: $(_home_path "$LEGACY_MAPPINGS_FILE") -> $(_home_path "$MAPPINGS_FILE")"
   echo "Backup saved: $(_home_path "$LEGACY_BACKUP_FILE") - validate that slinky works, then delete it."
 )
 
@@ -302,7 +302,7 @@ add_dotfile() (
     return 1
   fi
 
-  echo "Added dotfile: $source_home_path > $dotfile_rel_path"
+  echo "Added dotfile: $source_home_path -> $dotfile_rel_path"
 )
 
 list_dotfiles() (
@@ -318,7 +318,7 @@ list_dotfiles() (
 
     _matches_filter "$filter_path" "$dotfile_path" || continue
 
-    echo "$link_path > $dotfile_path"
+    echo "$link_path -> $dotfile_path"
   done < "$MAPPINGS_FILE"
 )
 
@@ -398,7 +398,7 @@ move_dotfile() (
     return 1
   fi
 
-  echo "Moved dotfile: '$source_rel_path' to '$dest_rel_path' and updated symlink"
+  echo "Moved dotfile: $source_rel_path to $dest_rel_path and updated symlink"
 )
 
 drop_dotfile() (
@@ -436,7 +436,7 @@ drop_dotfile() (
     echo "Error: Failed to move $dotfile_abs_path to $(_home_path "$link_abs_path")" >&2
     return 1
   fi
-  echo "Dropped dotfile: $dotfile_rel_path > $(_home_path "$link_abs_path")"
+  echo "Dropped dotfile: $dotfile_rel_path to $(_home_path "$link_abs_path")"
 
   tmp=$(mktemp) || {
     echo "Error: cannot create temporary file" >&2
@@ -496,7 +496,7 @@ find_links() (
     if [ -z "$tracked_dotfile" ]; then
       found_dotfile=$(_normalize_dotfile_path "${found_link_dest#"$DOTFILES"/}") ||
         found_dotfile=$found_link_dest
-      echo "$(_home_path "$found_link_abs") > $found_dotfile"
+      echo "$(_home_path "$found_link_abs") -> $found_dotfile"
     fi
   done << EOF
 $found_links
@@ -542,7 +542,7 @@ import_link() (
     return 1
   fi
 
-  echo "Imported dotfile symlink: $link_home_path > $dotfile_rel_path"
+  echo "Imported dotfile symlink: $link_home_path -> $dotfile_rel_path"
 )
 
 install_links() (
