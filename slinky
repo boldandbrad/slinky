@@ -2,12 +2,12 @@
 
 # slinky: simple dotfile symlink management
 # Requires:
-#   POSIX sh, awk, basename, cat, dirname, find, ln, mkdir, mv, rm, readlink,
-#   mktemp
+#   POSIX sh, awk, basename, cat, cp, dirname, find, ln, mkdir, mv, rm,
+#   readlink, mktemp
 
 VERSION="1.0.0-dev"
 
-for command in awk basename cat dirname find ln mkdir mv rm readlink mktemp; do
+for command in awk basename cat cp dirname find ln mkdir mv rm readlink mktemp; do
     command -v "$command" >/dev/null 2>&1 || {
         echo "Error: required command not found: $command" >&2
         exit 1
@@ -98,6 +98,39 @@ _get_mapping_link() (
 
 _get_mapping_dotfile() (
   printf '%s\n' "${1#*|}"
+)
+
+_rewrite_mappings() (
+  dotfile=$1
+  replacement=$2
+  tmp=$(mktemp) || {
+    echo "Error: cannot create temporary file" >&2
+    return 1
+  }
+  if ! cp -p "$MAPPINGS_FILE" "$tmp"; then
+    rm -f "$tmp"
+    echo "Error: failed to preserve mappings file permissions" >&2
+    return 1
+  fi
+  if [ ! -w "$tmp" ]; then
+    rm -f "$tmp"
+    echo "Error: mappings file is not writable: $MAPPINGS_FILE" >&2
+    return 1
+  fi
+  if ! awk -F'|' -v s="$dotfile" -v r="$replacement" '
+    /^[[:space:]]*#/ { print; next }
+    $2 != s { print }
+    END { if (r != "") print r }
+  ' "$MAPPINGS_FILE" >"$tmp"; then
+    rm -f "$tmp"
+    echo "Error: failed to rewrite mappings" >&2
+    return 1
+  fi
+  if ! mv "$tmp" "$MAPPINGS_FILE"; then
+    rm -f "$tmp"
+    echo "Error: failed to update mappings" >&2
+    return 1
+  fi
 )
 
 _matches_filter() {
@@ -384,8 +417,20 @@ move_dotfile() (
     return 1
   fi
 
+  link_home_path=$(_home_path "$link_abs_path")
+  if _path_exists "$link_abs_path" && [ ! -L "$link_abs_path" ]; then
+    echo "Cannot move '$source_abs_path': '$link_home_path' is not a symlink" >&2
+    return 1
+  fi
+
   if ! mkdir -p "$(dirname "$dest_abs_path")"; then
     echo "Error: Failed to create destination directory for '$dest_abs_path'" >&2
+    return 1
+  fi
+
+  link_dir=$(dirname "$link_abs_path")
+  if ! mkdir -p "$link_dir"; then
+    echo "Error: Failed to create directory '$(_home_path "$link_dir")'" >&2
     return 1
   fi
 
@@ -394,42 +439,31 @@ move_dotfile() (
     return 1
   fi
 
+  link_existed=0
   if [ -L "$link_abs_path" ]; then
-    rm "$link_abs_path" || {
-      echo "Error: Failed to remove existing symlink '$(_home_path "$link_abs_path")'" >&2
+    if ! rm "$link_abs_path"; then
+      mv "$dest_abs_path" "$source_abs_path"
+      echo "Error: Failed to remove existing symlink '$link_home_path'" >&2
       return 1
-    }
+    fi
+    link_existed=1
   fi
 
   if ! ln -s "$dest_abs_path" "$link_abs_path"; then
-    echo "Error: Failed to create new symlink $(_home_path "$link_abs_path")" >&2
+    mv "$dest_abs_path" "$source_abs_path"
+    if [ "$link_existed" = 1 ]; then
+      ln -s "$source_abs_path" "$link_abs_path" 2>/dev/null || true
+    fi
+    echo "Error: Failed to create new symlink $link_home_path" >&2
     return 1
   fi
 
-  tmp=$(mktemp) || {
-    mv "$dest_abs_path" "$source_abs_path";
-    echo "Error: cannot create temporary file" >&2
-    return 1
-  }
-
-  if ! awk -v s="$source_rel_path" -F'|' '$2 != s { print }' "$MAPPINGS_FILE" >"$tmp"; then
-    rm -f "$tmp"
-    mv "$dest_abs_path" "$source_abs_path";
-    echo "Error: failed to rewrite mappings" >&2
-    return 1
-  fi
-
-  if ! mv "$tmp" "$MAPPINGS_FILE"; then
-    rm -f "$tmp"
-    mv "$dest_abs_path" "$source_abs_path";
-    echo "Error: failed to update mappings" >&2
-    return 1
-  fi
-
-  mapping_entry="$link_path|$dest_rel_path"
-  if ! printf "%s\n" "$mapping_entry" >> "$MAPPINGS_FILE"; then
-    mv "$dest_abs_path" "$source_abs_path";
-    echo "Error: Failed to write $source_abs_path record to $MAPPINGS_FILE" >&2
+  if ! _rewrite_mappings "$source_rel_path" "$link_path|$dest_rel_path"; then
+    mv "$dest_abs_path" "$source_abs_path"
+    rm -f "$link_abs_path"
+    if [ "$link_existed" = 1 ]; then
+      ln -s "$source_abs_path" "$link_abs_path" 2>/dev/null || true
+    fi
     return 1
   fi
 
@@ -460,10 +494,13 @@ drop_dotfile() (
 
   link_path=$(_get_mapping_link "$mapping")
   link_abs_path=$(_absolute_path "$link_path")
+  link_home_path=$(_home_path "$link_abs_path")
+  link_existed=0
   if [ -L "$link_abs_path" ]; then
     rm "$link_abs_path" || return 1
+    link_existed=1
   elif [ -e "$link_abs_path" ]; then
-    echo "Refusing to replace existing non-symlink: $(_home_path "$link_abs_path")" >&2
+    echo "Refusing to replace existing non-symlink: $link_home_path" >&2
     return 1
   fi
 
@@ -474,28 +511,22 @@ drop_dotfile() (
   fi
 
   if ! mv "$dotfile_abs_path" "$link_abs_path"; then
-    echo "Error: Failed to move $dotfile_abs_path to $(_home_path "$link_abs_path")" >&2
-    return 1
-  fi
-  echo "Dropped dotfile: $dotfile_rel_path to $(_home_path "$link_abs_path")"
-
-  tmp=$(mktemp) || {
-    echo "Error: cannot create temporary file" >&2
-    return 1
-  }
-
-  if ! awk -v s="$dotfile_rel_path" -F'|' '$2 != s { print }' \
-    "$MAPPINGS_FILE" >"$tmp"; then
-    rm -f "$tmp"
-    echo "Error: failed to rewrite mappings" >&2
+    if [ "$link_existed" = 1 ]; then
+      ln -s "$dotfile_abs_path" "$link_abs_path" 2>/dev/null || true
+    fi
+    echo "Error: Failed to move $dotfile_abs_path to $link_home_path" >&2
     return 1
   fi
 
-  if ! mv "$tmp" "$MAPPINGS_FILE"; then
-    rm -f "$tmp"
-    echo "Error: failed to update mappings" >&2
+  if ! _rewrite_mappings "$dotfile_rel_path" ""; then
+    mv "$link_abs_path" "$dotfile_abs_path"
+    if [ "$link_existed" = 1 ]; then
+      ln -s "$dotfile_abs_path" "$link_abs_path" 2>/dev/null || true
+    fi
     return 1
   fi
+
+  echo "Dropped dotfile: $dotfile_rel_path to $link_home_path"
 )
 
 find_links() (

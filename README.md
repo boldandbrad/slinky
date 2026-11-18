@@ -26,6 +26,7 @@ Linux, macOS, and BSD.
 - `awk`
 - `basename`
 - `cat`
+- `cp`
 - `dirname`
 - `find` with `-maxdepth`
 - `ln`
