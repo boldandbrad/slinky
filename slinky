@@ -201,8 +201,9 @@ commands:
                                               repo and update its symlink
   drop <repo_rel_path>...                     Drop tracked dotfiles back to
                                               original locations
-  find [<path>]                               Find untracked symlinks to the
-                                              dotfiles repo
+  find [-d|--depth <n>] [<path>]              Find untracked symlinks to the
+                                              dotfiles repo (default: $HOME,
+                                              depth 3)
   import <path>...                            Import an untracked dotfile
                                               symlink
   install [-p|--path <repo_rel_path>]         Install symlinks for tracked
@@ -221,7 +222,7 @@ EOF
     list) echo "usage: slinky list [-p|--path <repo_rel_path>]" ;;
     move) echo "usage: slinky move <repo_rel_src> <repo_rel_tgt>" ;;
     drop) echo "usage: slinky drop <repo_rel_path>..." ;;
-    find) echo "usage: slinky find [<path>]" ;;
+    find) echo "usage: slinky find [-d|--depth <n>] [<path>]" ;;
     import) echo "usage: slinky import <path>..." ;;
     install) echo "usage: slinky install [-p|--path <repo_rel_path>]" ;;
     uninstall) echo "usage: slinky uninstall" ;;
@@ -450,8 +451,9 @@ drop_dotfile() (
 
 find_links() (
   search_path="$1"
+  depth="${2:-3}"
   if [ -z "$search_path" ]; then
-    search_path=~
+    search_path=$HOME
   fi
 
   if [ ! -d "$search_path" ]; then
@@ -459,7 +461,7 @@ find_links() (
     return 1
   fi
 
-  found_links=$(find "$search_path" -maxdepth 3 -type l 2>/dev/null)
+  found_links=$(find "$search_path" -maxdepth "$depth" -type l 2>/dev/null)
   [ -n "$found_links" ] || return 0
   while read -r found_link; do
     found_link_dest=$(_symlink_target "$found_link") || continue
@@ -768,11 +770,32 @@ case "$1" in
   find)
     shift
     _cmd_help find "$@"
-    _check_operands find "$@"
-    [ "$1" = "--" ] && shift
-    [ $# -le 1 ] || { help find >&2; exit 1; }
+    depth=3
+    search_path=""
+    depth_next=0
+    end_options=0
+    for arg in "$@"; do
+      if [ "$depth_next" = 1 ]; then
+        case "$arg" in ''|*[!0-9]*) help find >&2; exit 1 ;; esac
+        depth=$arg
+        depth_next=0
+        continue
+      fi
+      if [ "$end_options" = 1 ]; then
+        [ -z "$search_path" ] || { help find >&2; exit 1; }
+        search_path=$arg
+        continue
+      fi
+      case "$arg" in
+        --) end_options=1 ;;
+        -d|--depth) depth_next=1 ;;
+        -*) help find >&2; exit 1 ;;
+        *) [ -z "$search_path" ] || { help find >&2; exit 1; }; search_path=$arg ;;
+      esac
+    done
+    [ "$depth_next" = 0 ] || { help find >&2; exit 1; }
     init_repo
-    find_links "$@" || status=1
+    find_links "$search_path" "$depth" || status=1
     ;;
   import)
     shift

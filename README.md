@@ -181,8 +181,9 @@ slinky drop config/nvim .vimrc          # drop multiple at once
 ### Find
 
 ```sh
-slinky find                             # search the user's home directory for untracked symlinks pointing to the dotfiles repo
+slinky find                             # search $HOME (3 levels deep) for untracked symlinks
 slinky find ~/.config                   # search in the specified directory
+slinky find -d 5 ~/.config              # search 5 levels deep
 ```
 
 ### Import
