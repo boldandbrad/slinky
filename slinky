@@ -37,7 +37,7 @@ _absolute_path() (
   path="$1"
   case "$path" in
     '~')    path=$HOME ;;
-    '~/'*)  path="$HOME/${path#\~/}" ;;
+    '~'/*)  path="$HOME/${path#\~/}" ;;
     /*)     ;;
     ./*)    path="$PWD/${path#./}" ;;
     *)      path="$PWD/$path" ;;
