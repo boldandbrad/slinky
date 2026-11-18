@@ -59,7 +59,7 @@ light wrapper around `mv` and `ln` that can do tricks.
 
 ```txt
 ~/.vimrc                                # Before: regular file
-~/.vimrc -> ~/dotfiles/vimrc             # After: symlink
+~/.vimrc -> ~/dotfiles/vimrc            # After: symlink
 ```
 
 By default, slinky assumes your dotfiles repository is located at
