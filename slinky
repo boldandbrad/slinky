@@ -91,6 +91,14 @@ _get_mapping_dotfile() (
   printf '%s\n' "${1#*|}"
 )
 
+_matches_filter() {
+  [ -z "$1" ] && return 0
+  case "$2" in
+    "$1"/*|"$1") return 0 ;;
+  esac
+  return 1
+}
+
 # Normalize a repo-relative path to the form stored in the mappings file:
 # relative to the dotfiles repo root with a leading "./". Return failure for
 # absolute paths or paths that escape the repo.
@@ -208,7 +216,7 @@ commands:
                                               symlink
   install [-p|--path <repo_rel_path>]         Install symlinks for tracked
                                               dotfiles
-  uninstall                                   Uninstall tracked symlinks
+  uninstall [-p|--path <repo_rel_path>]       Uninstall tracked symlinks
   help|-h|--help                              Show this help
   version|-v|--version                        Show version
 
@@ -225,7 +233,7 @@ EOF
     find) echo "usage: slinky find [-d|--depth <n>] [<path>]" ;;
     import) echo "usage: slinky import <path>..." ;;
     install) echo "usage: slinky install [-p|--path <repo_rel_path>]" ;;
-    uninstall) echo "usage: slinky uninstall" ;;
+    uninstall) echo "usage: slinky uninstall [-p|--path <repo_rel_path>]" ;;
     help) echo "usage: slinky help" ;;
     version) echo "usage: slinky version" ;;
     *) echo "usage: slinky <command> [args]" ;;
@@ -308,13 +316,7 @@ list_dotfiles() (
       continue
     fi
 
-    if [ -n "$filter_path" ]; then
-      case "$dotfile_path" in
-        "$filter_path"/*) ;;
-        "$filter_path") ;;
-        *) continue ;;
-      esac
-    fi
+    _matches_filter "$filter_path" "$dotfile_path" || continue
 
     echo "$link_path > $dotfile_path"
   done < "$MAPPINGS_FILE"
@@ -556,13 +558,7 @@ install_links() (
       continue
     fi
 
-    if [ -n "$filter_path" ]; then
-      case "$dotfile_path" in
-        "$filter_path"/*) ;;
-        "$filter_path") ;;
-        *) continue ;;
-      esac
-    fi
+    _matches_filter "$filter_path" "$dotfile_path" || continue
 
     dotfile_abs_path="$DOTFILES/${dotfile_path#./}"
     if [ ! -e "$dotfile_abs_path" ]; then
@@ -611,19 +607,33 @@ install_links() (
 )
 
 uninstall_links() (
+  filter_path="$1"
+  uninstall_status=0
   while IFS= read -r mapping; do
     case "$mapping" in ''|'#'* ) continue ;;
     esac
     link_path=$(_get_mapping_link "$mapping")
+    if ! dotfile_path=$(_normalize_dotfile_path "$(_get_mapping_dotfile "$mapping")"); then
+      echo "Warning: skipping invalid mapping: $mapping" >&2
+      uninstall_status=1
+      continue
+    fi
+
+    _matches_filter "$filter_path" "$dotfile_path" || continue
+
     link_abs_path=$(_absolute_path "$link_path")
     if [ -L "$link_abs_path" ]; then
-      rm "$link_abs_path" || return 1
-      echo "Removed symlink: $(_home_path "$link_abs_path")"
+      if rm "$link_abs_path"; then
+        echo "Removed symlink: $(_home_path "$link_abs_path")"
+      else
+        uninstall_status=1
+      fi
     elif [ -e "$link_abs_path" ]; then
       echo "Refusing to remove existing non-symlink: $(_home_path "$link_abs_path")" >&2
-      return 1
+      uninstall_status=1
     fi
   done < "$MAPPINGS_FILE"
+  return "$uninstall_status"
 )
 
 # Print command usage and exit if -h/--help appears before --.
@@ -648,7 +658,6 @@ _check_operands() {
   done
 }
 
-# Parse list/install options and set filter_path in the caller.
 _parse_filter() {
   _cmd=$1
   shift
@@ -827,10 +836,9 @@ case "$1" in
   uninstall)
     shift
     _cmd_help uninstall "$@"
-    [ "$1" = "--" ] && shift
-    [ $# -eq 0 ] || usage_error uninstall
+    _parse_filter uninstall "$@"
     init_repo
-    uninstall_links || status=1
+    uninstall_links "$filter_path" || status=1
     ;;
   help|"-h"|"--help")
     shift
