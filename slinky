@@ -14,16 +14,6 @@ for command in awk find ln mkdir mv rm readlink mktemp; do
 done
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
-case "$DOTFILES" in
-  /) echo "Error: DOTFILES must not be root: $DOTFILES" >&2; exit 1 ;;
-  /*) ;;
-  *) echo "Error: DOTFILES must be an absolute path: $DOTFILES" >&2; exit 1 ;;
-esac
-if [ ! -d "$DOTFILES" ]; then
-  echo "Error: '$DOTFILES' is not a directory or cannot be accessed." >&2
-  exit 1
-fi
-
 MAPPINGS_FORMAT_VERSION=1
 MAPPINGS_FILE="$DOTFILES/slinky-v$MAPPINGS_FORMAT_VERSION.psv"
 LEGACY_MAPPINGS_FILE="$DOTFILES/slinky.psv"
@@ -135,14 +125,6 @@ migrate_v0() (
   echo "Migrated mappings: $(_home_path "$LEGACY_MAPPINGS_FILE") > $(_home_path "$MAPPINGS_FILE")"
   echo "Backup saved: $(_home_path "$LEGACY_BACKUP_FILE") - validate that slinky works, then delete it."
 )
-
-_check_mappings_format || exit 1
-
-if [ -f "$LEGACY_MAPPINGS_FILE" ]; then
-  migrate_v0 || exit 1
-fi
-
-[ -f "$MAPPINGS_FILE" ] || : > "$MAPPINGS_FILE"
 
 help() (
   if [ $# -eq 0 ]; then
@@ -601,6 +583,25 @@ _parse_filter() {
   [ "$path_next" = 0 ] || { help "$_cmd" >&2; exit 1; }
 }
 
+# Validate DOTFILES and prepare the mappings file for commands that need it.
+init_repo() {
+  case "$DOTFILES" in
+    /) echo "Error: DOTFILES must not be root: $DOTFILES" >&2; exit 1 ;;
+    /*) ;;
+    *) echo "Error: DOTFILES must be an absolute path: $DOTFILES" >&2; exit 1 ;;
+  esac
+  if [ ! -d "$DOTFILES" ]; then
+    echo "Error: '$DOTFILES' is not a directory or cannot be accessed." >&2
+    exit 1
+  fi
+
+  _check_mappings_format || exit 1
+  if [ -f "$LEGACY_MAPPINGS_FILE" ]; then
+    migrate_v0 || exit 1
+  fi
+  [ -f "$MAPPINGS_FILE" ] || : > "$MAPPINGS_FILE"
+}
+
 status=0
 case "$1" in
   add)
@@ -608,42 +609,50 @@ case "$1" in
     _cmd_help add "$@"
     repo_rel_path=""
     path_next=0
+    source_count=0
+    end_options=0
     for arg in "$@"; do
-      [ "$arg" = "--" ] && break
       if [ "$path_next" = 1 ]; then
         case "$arg" in ''|-*) help add >&2; exit 1 ;; esac
         repo_rel_path=$arg
         path_next=0
-      else
-        case "$arg" in
-          -p|--path)
-            [ -z "$repo_rel_path" ] || { help add >&2; exit 1; }
-            path_next=1
-            ;;
-          -*) help add >&2; exit 1 ;;
-        esac
+        continue
       fi
+      if [ "$end_options" = 1 ]; then
+        source_count=$((source_count + 1))
+        continue
+      fi
+      case "$arg" in
+        --) end_options=1 ;;
+        -p|--path)
+          [ -z "$repo_rel_path" ] || { help add >&2; exit 1; }
+          path_next=1
+          ;;
+        -*) help add >&2; exit 1 ;;
+        *) source_count=$((source_count + 1)) ;;
+      esac
     done
     [ "$path_next" = 0 ] || { help add >&2; exit 1; }
+    [ "$source_count" -gt 0 ] || { help add >&2; exit 1; }
 
-    source_count=0
+    init_repo
+
     while [ $# -gt 0 ]; do
       case "$1" in
         -p|--path) shift 2 ;;
         --) shift; break ;;
-        *) add_dotfile "$1" "$repo_rel_path" || status=1; source_count=$((source_count + 1)); shift ;;
+        *) add_dotfile "$1" "$repo_rel_path" || status=1; shift ;;
       esac
     done
     for arg in "$@"; do
       add_dotfile "$arg" "$repo_rel_path" || status=1
-      source_count=$((source_count + 1))
     done
-    [ "$source_count" -gt 0 ] || { help add >&2; exit 1; }
     ;;
   list)
     shift
     _cmd_help list "$@"
     _parse_filter list "$@"
+    init_repo
     list_dotfiles "$filter_path" || status=1
     ;;
   move)
@@ -652,6 +661,7 @@ case "$1" in
     _check_operands move "$@"
     [ "$1" = "--" ] && shift
     [ $# -eq 2 ] || { help move >&2; exit 1; }
+    init_repo
     move_dotfile "$1" "$2" || status=1
     ;;
   drop)
@@ -660,6 +670,7 @@ case "$1" in
     _check_operands drop "$@"
     [ "$1" = "--" ] && shift
     [ $# -ge 1 ] || { help drop >&2; exit 1; }
+    init_repo
     for repo_rel_path in "$@"; do
       drop_dotfile "$repo_rel_path" || status=1
     done
@@ -670,6 +681,7 @@ case "$1" in
     _check_operands find "$@"
     [ "$1" = "--" ] && shift
     [ $# -le 1 ] || { help find >&2; exit 1; }
+    init_repo
     find_links "$@" || status=1
     ;;
   import)
@@ -678,6 +690,7 @@ case "$1" in
     _check_operands import "$@"
     [ "$1" = "--" ] && shift
     [ $# -ge 1 ] || { help import >&2; exit 1; }
+    init_repo
     for arg in "$@"; do
       import_link "$arg" || status=1
     done
@@ -686,6 +699,7 @@ case "$1" in
     shift
     _cmd_help install "$@"
     _parse_filter install "$@"
+    init_repo
     install_links "$filter_path" || status=1
     ;;
   uninstall)
@@ -693,6 +707,7 @@ case "$1" in
     _cmd_help uninstall "$@"
     [ "$1" = "--" ] && shift
     [ $# -eq 0 ] || { help uninstall >&2; exit 1; }
+    init_repo
     uninstall_links || status=1
     ;;
   help|"-h"|"--help")
