@@ -76,20 +76,35 @@ _path_exists() {
   [ -e "$1" ] || [ -L "$1" ]
 }
 
+# Return true for blank or whitespace-only mapping lines.
+_is_blank_mapping() {
+  case "$1" in
+    *[![:space:]]*) return 1 ;;
+  esac
+  return 0
+}
+
+# Return true when a line contains a mapping delimiter. Comment lines do not.
+_has_mapping_delimiter() {
+  case "$1" in
+    *'|'*) return 0 ;;
+  esac
+  return 1
+}
+
 _find_mapping_by_dotfile() (
   awk -F'|' -v path="$1" \
-    '$0 !~ /^[[:space:]]*#/ && $2 == path { print; exit }' "$MAPPINGS_FILE"
+    '$2 == path { print; exit }' "$MAPPINGS_FILE"
 )
 
 _count_mappings_by_dotfile() (
   awk -F'|' -v path="$1" \
-    '$0 !~ /^[[:space:]]*#/ && $2 == path { count++ } END { print count + 0 }' \
-    "$MAPPINGS_FILE"
+    '$2 == path { count++ } END { print count + 0 }' "$MAPPINGS_FILE"
 )
 
 _find_mapping_by_link() (
   awk -F'|' -v link="$1" \
-    '$0 !~ /^[[:space:]]*#/ && $1 == link { print; exit }' "$MAPPINGS_FILE"
+    '$1 == link { print; exit }' "$MAPPINGS_FILE"
 )
 
 _get_mapping_link() (
@@ -118,8 +133,7 @@ _rewrite_mappings() (
     return 1
   fi
   if ! awk -F'|' -v s="$dotfile" -v r="$replacement" '
-    /^[[:space:]]*#/ { print; next }
-    $2 != s { print }
+    NF == 2 && $2 != s { print }
     END { if (r != "") print r }
   ' "$MAPPINGS_FILE" >"$tmp"; then
     rm -f "$tmp"
@@ -221,9 +235,11 @@ migrate_v0() (
     return 1
   fi
 
+  # The legacy format tolerated comments and older versions wrote a header, so
+  # drop them here. The original file is kept as a backup.
   if ! awk -F'|' '
-    /^[[:space:]]*$/ { print ""; next }
-    /^[[:space:]]*#/ { sub(/^[[:space:]]+/, ""); print; next }
+    /^[[:space:]]*$/ { next }
+    /^[[:space:]]*#/ { next }
     {
       dotfile = $1
       link = $2
@@ -374,8 +390,11 @@ add_dotfile() (
 list_dotfiles() (
   filter_path="$1"
   while IFS= read -r mapping; do
-    case "$mapping" in ''|'#'*) continue ;;
-    esac
+    _is_blank_mapping "$mapping" && continue
+    if ! _has_mapping_delimiter "$mapping"; then
+      echo "Warning: skipping invalid mapping: $mapping" >&2
+      continue
+    fi
     link_path=$(_home_path "$(_get_mapping_link "$mapping")")
     if ! dotfile_path=$(_normalize_dotfile_path "$(_get_mapping_dotfile "$mapping")"); then
       echo "Warning: skipping invalid mapping: $mapping" >&2
@@ -569,8 +588,8 @@ find_links() (
     found_link_abs=$(_absolute_path "$found_link")
     tracked_dotfile=""
     while IFS= read -r mapping; do
-      case "$mapping" in ''|'#'* ) continue ;;
-      esac
+      _is_blank_mapping "$mapping" && continue
+      _has_mapping_delimiter "$mapping" || continue
 
       link_path=$(_get_mapping_link "$mapping")
       link_abs_path=$(_absolute_path "$link_path")
@@ -652,8 +671,12 @@ install_links() (
   filter_path="$1"
   install_status=0
   while IFS= read -r mapping; do
-    case "$mapping" in ''|'#'* ) continue ;;
-    esac
+    _is_blank_mapping "$mapping" && continue
+    if ! _has_mapping_delimiter "$mapping"; then
+      echo "Warning: skipping invalid mapping: $mapping" >&2
+      install_status=1
+      continue
+    fi
     link_path=$(_get_mapping_link "$mapping")
     if ! dotfile_path=$(_normalize_dotfile_path "$(_get_mapping_dotfile "$mapping")"); then
       echo "Warning: skipping invalid mapping: $mapping" >&2
@@ -713,8 +736,12 @@ uninstall_links() (
   filter_path="$1"
   uninstall_status=0
   while IFS= read -r mapping; do
-    case "$mapping" in ''|'#'* ) continue ;;
-    esac
+    _is_blank_mapping "$mapping" && continue
+    if ! _has_mapping_delimiter "$mapping"; then
+      echo "Warning: skipping invalid mapping: $mapping" >&2
+      uninstall_status=1
+      continue
+    fi
     link_path=$(_get_mapping_link "$mapping")
     if ! dotfile_path=$(_normalize_dotfile_path "$(_get_mapping_dotfile "$mapping")"); then
       echo "Warning: skipping invalid mapping: $mapping" >&2
