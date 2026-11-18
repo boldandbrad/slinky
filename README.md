@@ -12,14 +12,15 @@ of them for easy install. That's it.
 - 📜 Git-friendly: Symlinked dotfiles work well with any VCS.
 - 🗂️ Flexible: Organize files however you want - by host, OS, or category.
 - 🔧 No config: Just works with your dotfiles repo.
-- 🐚 Portable: Single POSIX shell script with few dependencies.
+- 🐚 Portable: Single POSIX `sh` script that relies on a small, documented set
+  of standard Unix utilities.
 
 ## Install
 
 ### Dependencies
 
-Slinky is a POSIX shell script that relies only on a few standard utilities,
-which ship by default on most modern Linux, macOS, and BSD systems:
+Slinky targets POSIX `sh` and the utilities listed below. It is intended for
+Linux, macOS, and BSD.
 
 - `sh`
 - `awk`
@@ -34,14 +35,20 @@ which ship by default on most modern Linux, macOS, and BSD systems:
 - `readlink`
 - `mktemp`
 
+These are common on modern Unix-like systems, but they are not guaranteed in
+minimal or strict POSIX-only environments. `find -maxdepth` is a common
+extension rather than a POSIX option, and `readlink`/`mktemp` are not part of
+older POSIX utility sets.
+
 ### Package manager
 
 ```sh
 brew install boldandbrad/tap/slinky
 ```
 
-> Slinky is mostly a personal project, but if it gains traction I may add
-> slinky to other package managers in the future.
+> Slinky is mostly a hobby project, but if it gains traction I may add it to
+> other package managers in the future. Feel free to
+> [open an issue](https://github.com/boldandbrad/slinky/issues).
 
 ### Manual
 
@@ -69,9 +76,9 @@ By default, slinky assumes your dotfiles repository is located at
 `$HOME/dotfiles`, but you can change this behavior by setting the `$DOTFILES`
 environment variable.
 
-Slinky maintains a simple pipe-separated value file (`slinky-v1.psv`) in the
-dotfiles repository root to track the files and directories it manages. Each
-line records the symlink location and the dotfile's path relative to the
+Slinky maintains a simple pipe-separated value mapping file (`slinky-v1.psv`) in
+your dotfiles repository root to track the files and directories it manages.
+Each line records the symlink location and the dotfile's path relative to the
 mappings file, prefixed with `./`. Example:
 
 ```txt
@@ -122,8 +129,7 @@ That's it! To install your dotfiles onto another computer, read
 Follow this guide if you have an existing symlink based dotfile repository and
 you'd like to migrate to slinky.
 
-1. Move your local repository to `~/dotfiles`, or set `$DOTFILES` to tell slinky
-where it is
+1. Set `$DOTFILES` to the location of your existing dotfiles repository
 2. Find your existing symlinks: `slinky find`
 3. Import them: `slinky import symlink1 symlink2 ...`
 4. Delete your previous dotfile manager
