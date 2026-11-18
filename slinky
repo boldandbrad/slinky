@@ -141,11 +141,18 @@ _matches_filter() {
   return 1
 }
 
-# Normalize a repo-relative path to the form stored in the mappings file:
-# relative to the dotfiles repo root with a leading "./". Return failure for
-# absolute paths or paths that escape the repo.
+_check_mapping_path() (
+  cr=$(printf '\r')
+  nl='
+'
+  case "$1" in
+    *'|'*|*"$cr"*|*"$nl"*) return 1 ;;
+  esac
+)
+
 _normalize_dotfile_path() (
   path="$1"
+  _check_mapping_path "$path" || return 1
   case "$path" in
     /*) return 1 ;;
   esac
@@ -176,6 +183,10 @@ _normalize_dotfile_path() (
 
 # Normalize a user-supplied repo path, reporting invalid input.
 _normalize_repo_path() {
+  if ! _check_mapping_path "$1"; then
+    echo "Error: '$1' contains '|', a newline, or a carriage return, which cannot be stored in a mapping" >&2
+    return 1
+  fi
   _normalize_dotfile_path "$1" && return 0
   echo "Error: '$1' must be a relative path inside the dotfiles repo" >&2
   return 1
@@ -295,6 +306,11 @@ add_dotfile() (
 
   source_path=$(_absolute_path "$source_path")
   source_home_path=$(_home_path "$source_path")
+  if ! _check_mapping_path "$source_home_path"; then
+    echo "Cannot add '$source_home_path' to dotfiles: the path contains '|', a newline, or a carriage return" >&2
+    return 1
+  fi
+
   if [ -n "$(_find_mapping_by_link "$source_home_path")" ]; then
     echo "Cannot add '$source_home_path' to dotfiles: it is already tracked" >&2
     return 1
@@ -599,6 +615,14 @@ import_link() (
   esac
 
   link_home_path=$(_home_path "$link_path")
+  if ! _check_mapping_path "$link_home_path"; then
+    echo "Cannot import symlink '$link_home_path': the path contains '|', a newline, or a carriage return" >&2
+    return 1
+  fi
+  if ! _check_mapping_path "$dotfile_path"; then
+    echo "Cannot import symlink '$link_home_path': its target contains '|', a newline, or a carriage return" >&2
+    return 1
+  fi
   if ! dotfile_rel_path=$(_normalize_dotfile_path "$dotfile_path"); then
     echo "Cannot import symlink '$link_home_path': its target is outside the dotfiles repo" >&2
     return 1

@@ -81,7 +81,8 @@ Slinky maintains a simple pipe-separated value mapping file (`slinky-v1.psv`) in
 your dotfiles repository root to track the files and directories it manages.
 Each line records the symlink location and the dotfile's path relative to the
 mappings file, prefixed with `./`. Slinky tracks at most one link per dotfile.
-Example:
+Paths containing `|`, a newline, or a carriage return cannot be stored in a
+mapping record and are rejected. Example:
 
 ```txt
 ~/.vimrc|./vimrc
