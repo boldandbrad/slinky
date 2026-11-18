@@ -77,11 +77,19 @@ _path_exists() {
 }
 
 _find_mapping_by_dotfile() (
-  awk -F'|' -v path="$1" '$2 == path { print; exit }' "$MAPPINGS_FILE"
+  awk -F'|' -v path="$1" \
+    '$0 !~ /^[[:space:]]*#/ && $2 == path { print; exit }' "$MAPPINGS_FILE"
+)
+
+_count_mappings_by_dotfile() (
+  awk -F'|' -v path="$1" \
+    '$0 !~ /^[[:space:]]*#/ && $2 == path { count++ } END { print count + 0 }' \
+    "$MAPPINGS_FILE"
 )
 
 _find_mapping_by_link() (
-  awk -F'|' -v link="$1" '$1 == link { print; exit }' "$MAPPINGS_FILE"
+  awk -F'|' -v link="$1" \
+    '$0 !~ /^[[:space:]]*#/ && $1 == link { print; exit }' "$MAPPINGS_FILE"
 )
 
 _get_mapping_link() (
@@ -222,6 +230,7 @@ commands:
   version|-v|--version                        Show version
 
 All commands accept -h/--help. Use -- before paths beginning with '-'.
+Each dotfile can be tracked by only one link.
 EOF
     return
   fi
@@ -273,6 +282,13 @@ add_dotfile() (
     return 1
   dotfile_path="$DOTFILES/${dotfile_rel_path#./}"
   mapping_entry="$source_home_path|$dotfile_rel_path"
+
+  existing_mapping=$(_find_mapping_by_dotfile "$dotfile_rel_path")
+  if [ -n "$existing_mapping" ]; then
+    existing_link=$(_get_mapping_link "$existing_mapping")
+    echo "Cannot add '$source_home_path' to dotfiles: '$dotfile_rel_path' is already tracked by '$existing_link'" >&2
+    return 1
+  fi
 
   if _path_exists "$dotfile_path"; then
     echo "Cannot add '$source_home_path' to dotfiles: '$dotfile_path' already exists" >&2
@@ -336,6 +352,12 @@ move_dotfile() (
     return 1
   fi
 
+  mapping_count=$(_count_mappings_by_dotfile "$source_rel_path")
+  if [ "$mapping_count" -gt 1 ]; then
+    echo "Cannot move dotfile '$source_abs_path': multiple links are tracked for it" >&2
+    return 1
+  fi
+
   mapping=$(_find_mapping_by_dotfile "$source_rel_path")
   if [ -z "$mapping" ]; then
     echo "Cannot move dotfile '$source_abs_path': no mapping found in '$MAPPINGS_FILE'." >&2
@@ -344,6 +366,18 @@ move_dotfile() (
 
   link_path=$(_get_mapping_link "$mapping")
   link_abs_path=$(_absolute_path "$link_path")
+
+  if [ "$dest_rel_path" = "$source_rel_path" ]; then
+    echo "Cannot move '$source_abs_path': source and destination are the same" >&2
+    return 1
+  fi
+
+  existing_mapping=$(_find_mapping_by_dotfile "$dest_rel_path")
+  if [ -n "$existing_mapping" ]; then
+    existing_link=$(_get_mapping_link "$existing_mapping")
+    echo "Cannot move dotfile '$source_abs_path': destination '$dest_abs_path' is already tracked by '$existing_link'" >&2
+    return 1
+  fi
 
   if _path_exists "$dest_abs_path"; then
     echo "Cannot move '$source_abs_path' to '$dest_abs_path': it already exists" >&2
@@ -406,6 +440,12 @@ drop_dotfile() (
   dotfile_path="$1"
   dotfile_rel_path=$(_normalize_repo_path "$dotfile_path") || return 1
   dotfile_abs_path="$DOTFILES/${dotfile_rel_path#./}"
+
+  mapping_count=$(_count_mappings_by_dotfile "$dotfile_rel_path")
+  if [ "$mapping_count" -gt 1 ]; then
+    echo "Cannot drop '$dotfile_abs_path': multiple links are tracked for it" >&2
+    return 1
+  fi
 
   mapping=$(_find_mapping_by_dotfile "$dotfile_rel_path")
   if [ -z "$mapping" ]; then
@@ -534,6 +574,13 @@ import_link() (
   fi
   if [ -n "$(_find_mapping_by_link "$link_home_path")" ]; then
     echo "Cannot import symlink '$link_home_path': it is already tracked" >&2
+    return 1
+  fi
+
+  existing_mapping=$(_find_mapping_by_dotfile "$dotfile_rel_path")
+  if [ -n "$existing_mapping" ]; then
+    existing_link=$(_get_mapping_link "$existing_mapping")
+    echo "Cannot import symlink '$link_home_path': '$dotfile_rel_path' is already tracked by '$existing_link'" >&2
     return 1
   fi
 
