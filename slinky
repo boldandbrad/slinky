@@ -232,6 +232,12 @@ EOF
   esac
 )
 
+# Print a command's usage to stderr and exit.
+usage_error() {
+  help "$1" >&2
+  exit 1
+}
+
 add_dotfile() (
   source_path="$1"
   repo_rel_path="$2"
@@ -638,7 +644,7 @@ _check_operands() {
   shift
   [ "$1" = "--" ] && return 0
   for arg in "$@"; do
-    case "$arg" in -*) help "$_cmd" >&2; exit 1 ;; esac
+    case "$arg" in -*) usage_error "$_cmd" ;; esac
   done
 }
 
@@ -650,22 +656,22 @@ _parse_filter() {
   path_next=0
   while [ $# -gt 0 ]; do
     if [ "$path_next" = 1 ]; then
-      case "$1" in ''|-*) help "$_cmd" >&2; exit 1 ;; esac
+      case "$1" in ''|-*) usage_error "$_cmd" ;; esac
       filter_path=$1
       path_next=0
     else
       case "$1" in
-        --) [ $# -eq 1 ] || { help "$_cmd" >&2; exit 1; } ;;
+        --) [ $# -eq 1 ] || usage_error "$_cmd" ;;
         -p|--path)
-          [ -z "$filter_path" ] || { help "$_cmd" >&2; exit 1; }
+          [ -z "$filter_path" ] || usage_error "$_cmd"
           path_next=1
           ;;
-        *) help "$_cmd" >&2; exit 1 ;;
+        *) usage_error "$_cmd" ;;
       esac
     fi
     shift
   done
-  [ "$path_next" = 0 ] || { help "$_cmd" >&2; exit 1; }
+  [ "$path_next" = 0 ] || usage_error "$_cmd"
   if [ -n "$filter_path" ]; then
     filter_path=$(_normalize_repo_path "$filter_path") || exit 1
   fi
@@ -701,7 +707,7 @@ case "$1" in
     end_options=0
     for arg in "$@"; do
       if [ "$path_next" = 1 ]; then
-        case "$arg" in ''|-*) help add >&2; exit 1 ;; esac
+        case "$arg" in ''|-*) usage_error add ;; esac
         repo_rel_path=$arg
         path_next=0
         continue
@@ -713,15 +719,15 @@ case "$1" in
       case "$arg" in
         --) end_options=1 ;;
         -p|--path)
-          [ -z "$repo_rel_path" ] || { help add >&2; exit 1; }
+          [ -z "$repo_rel_path" ] || usage_error add
           path_next=1
           ;;
-        -*) help add >&2; exit 1 ;;
+        -*) usage_error add ;;
         *) has_source=1 ;;
       esac
     done
-    [ "$path_next" = 0 ] || { help add >&2; exit 1; }
-    [ "$has_source" = 1 ] || { help add >&2; exit 1; }
+    [ "$path_next" = 0 ] || usage_error add
+    [ "$has_source" = 1 ] || usage_error add
 
     if [ -n "$repo_rel_path" ]; then
       repo_rel_path=$(_normalize_repo_path "$repo_rel_path") || exit 1
@@ -752,7 +758,7 @@ case "$1" in
     _cmd_help move "$@"
     _check_operands move "$@"
     [ "$1" = "--" ] && shift
-    [ $# -eq 2 ] || { help move >&2; exit 1; }
+    [ $# -eq 2 ] || usage_error move
     init_repo
     move_dotfile "$1" "$2" || status=1
     ;;
@@ -761,7 +767,7 @@ case "$1" in
     _cmd_help drop "$@"
     _check_operands drop "$@"
     [ "$1" = "--" ] && shift
-    [ $# -ge 1 ] || { help drop >&2; exit 1; }
+    [ $# -ge 1 ] || usage_error drop
     init_repo
     for repo_rel_path in "$@"; do
       drop_dotfile "$repo_rel_path" || status=1
@@ -776,24 +782,27 @@ case "$1" in
     end_options=0
     for arg in "$@"; do
       if [ "$depth_next" = 1 ]; then
-        case "$arg" in ''|*[!0-9]*) help find >&2; exit 1 ;; esac
+        case "$arg" in ''|*[!0-9]*) usage_error find ;; esac
         depth=$arg
         depth_next=0
         continue
       fi
       if [ "$end_options" = 1 ]; then
-        [ -z "$search_path" ] || { help find >&2; exit 1; }
+        [ -z "$search_path" ] || usage_error find
         search_path=$arg
         continue
       fi
       case "$arg" in
         --) end_options=1 ;;
         -d|--depth) depth_next=1 ;;
-        -*) help find >&2; exit 1 ;;
-        *) [ -z "$search_path" ] || { help find >&2; exit 1; }; search_path=$arg ;;
+        -*) usage_error find ;;
+        *)
+          [ -z "$search_path" ] || usage_error find
+          search_path=$arg
+          ;;
       esac
     done
-    [ "$depth_next" = 0 ] || { help find >&2; exit 1; }
+    [ "$depth_next" = 0 ] || usage_error find
     init_repo
     find_links "$search_path" "$depth" || status=1
     ;;
@@ -802,7 +811,7 @@ case "$1" in
     _cmd_help import "$@"
     _check_operands import "$@"
     [ "$1" = "--" ] && shift
-    [ $# -ge 1 ] || { help import >&2; exit 1; }
+    [ $# -ge 1 ] || usage_error import
     init_repo
     for arg in "$@"; do
       import_link "$arg" || status=1
@@ -819,26 +828,25 @@ case "$1" in
     shift
     _cmd_help uninstall "$@"
     [ "$1" = "--" ] && shift
-    [ $# -eq 0 ] || { help uninstall >&2; exit 1; }
+    [ $# -eq 0 ] || usage_error uninstall
     init_repo
     uninstall_links || status=1
     ;;
   help|"-h"|"--help")
     shift
     case "$1" in --|-h|--help) shift ;; esac
-    [ $# -eq 0 ] || { help help >&2; exit 1; }
+    [ $# -eq 0 ] || usage_error help
     help
     ;;
   version|"-v"|"--version")
     shift
     _cmd_help version "$@"
     [ "$1" = "--" ] && shift
-    [ $# -eq 0 ] || { help version >&2; exit 1; }
+    [ $# -eq 0 ] || usage_error version
     echo "slinky version $VERSION"
     ;;
   *)
-    help "$1" >&2
-    exit 1
+    usage_error "$1"
     ;;
 esac
 exit "$status"
