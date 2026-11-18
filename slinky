@@ -465,6 +465,30 @@ import_link() (
   echo "Imported dotfile symlink: $link_home_path > $dotfile_rel_path"
 )
 
+_symlink_target() (
+  link=$1
+  target=$(readlink "$link") || return 1
+  case "$target" in
+    /*) path=$target ;;
+    *)  path=$(dirname "$link")/$target ;;
+  esac
+
+  resolved=""
+  rest=$path
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      */*) part=${rest%%/*}; rest=${rest#*/} ;;
+      *)   part=$rest; rest="" ;;
+    esac
+    case "$part" in
+      ''|.) ;;
+      ..)   resolved=${resolved%/*} ;;
+      *)    resolved=$resolved/$part ;;
+    esac
+  done
+  printf '%s\n' "${resolved:-/}"
+)
+
 install_links() (
   filter_path="$1"
   install_status=0
@@ -491,8 +515,22 @@ install_links() (
     fi
 
     link_abs_path=$(_absolute_path "$link_path")
-    if _path_exists "$link_abs_path"; then
-      echo "Skipped, symlink already exists: $(_home_path "$link_abs_path")" >&2
+    if [ -L "$link_abs_path" ]; then
+      link_target=$(_symlink_target "$link_abs_path")
+      if [ "$link_target" = "$dotfile_abs_path" ]; then
+        echo "Already installed: $(_home_path "$link_abs_path")"
+      elif [ -e "$link_abs_path" ]; then
+        echo "Conflict, symlink points elsewhere: $(_home_path "$link_abs_path") -> $link_target" >&2
+        install_status=1
+      else
+        echo "Dangling symlink: $(_home_path "$link_abs_path") -> $link_target" >&2
+        install_status=1
+      fi
+      continue
+    fi
+
+    if [ -e "$link_abs_path" ]; then
+      echo "Conflict, path exists and is not a symlink: $(_home_path "$link_abs_path")" >&2
       install_status=1
       continue
     fi
