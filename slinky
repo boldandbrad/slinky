@@ -46,6 +46,10 @@ _find_mapping_by_dotfile() (
   awk -F'|' -v path="$1" '$2 == path { print; exit }' "$MAPPINGS_FILE"
 )
 
+_find_mapping_by_link() (
+  awk -F'|' -v link="$1" '$1 == link { print; exit }' "$MAPPINGS_FILE"
+)
+
 _get_mapping_link() (
   printf '%s\n' "${1%%|*}"
 )
@@ -175,13 +179,18 @@ add_dotfile() (
 
   source_path=$(_absolute_path "$source_path")
   source_home_path=$(_home_path "$source_path")
-  if [ ! -e "$source_path" ]; then
-    echo "Cannot add '$source_home_path' to dotfiles: does not exist" >&2
+  if [ -n "$(_find_mapping_by_link "$source_home_path")" ]; then
+    echo "Cannot add '$source_home_path' to dotfiles: it is already tracked" >&2
     return 1
   fi
 
   if [ -L "$source_path" ]; then
     echo "Cannot add '$source_home_path' to dotfiles: it is a symlink. Try 'slinky import'" >&2
+    return 1
+  fi
+
+  if [ ! -e "$source_path" ]; then
+    echo "Cannot add '$source_home_path' to dotfiles: does not exist" >&2
     return 1
   fi
 
@@ -196,8 +205,8 @@ add_dotfile() (
   mapping_entry="$source_home_path|$dotfile_rel_path"
 
   if _path_exists "$dotfile_path"; then
-    echo "Skipped, dotfile already exists: $dotfile_path" >&2
-    return 0
+    echo "Cannot add '$source_home_path' to dotfiles: '$dotfile_path' already exists" >&2
+    return 1
   fi
 
   dest_dir="$(dirname "$dotfile_path")"
@@ -450,8 +459,7 @@ import_link() (
 
   dotfile_rel_path=$(_normalize_dotfile_path "$dotfile_path")
   link_home_path=$(_home_path "$link_path")
-  mapping=$(awk -v s="$link_home_path" -F'|' '$1 == s { print; exit }' "$MAPPINGS_FILE")
-  if [ -n "$mapping" ]; then
+  if [ -n "$(_find_mapping_by_link "$link_home_path")" ]; then
     echo "Cannot import symlink '$link_home_path': it is already tracked" >&2
     return 1
   fi
