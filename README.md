@@ -146,6 +146,10 @@ That's it!
 All commands accept `-h`/`--help` and treat `--` as the end of options. Use `--`
 before a path that begins with `-`.
 
+Repository paths (`add -p`, `list -p`, `install -p`, `move`, and `drop`) are
+relative to `$DOTFILES`. Absolute paths and paths that escape the repo are
+rejected.
+
 ### Add
 
 ```sh

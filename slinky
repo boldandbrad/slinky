@@ -13,7 +13,21 @@ for command in awk find ln mkdir mv rm readlink mktemp; do
     }
 done
 
+# Resolve an existing directory to its physical path.
+_canonical_dir() (
+  if cd "$1" 2>/dev/null; then
+    pwd -P
+  else
+    printf '%s\n' "$1"
+  fi
+)
+
+HOME_CANONICAL=$(_canonical_dir "$HOME")
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
+case "$DOTFILES" in
+  /*) DOTFILES=$(_canonical_dir "$DOTFILES") ;;
+esac
+
 MAPPINGS_FORMAT_VERSION=1
 MAPPINGS_FILE="$DOTFILES/slinky-v$MAPPINGS_FORMAT_VERSION.psv"
 LEGACY_MAPPINGS_FILE="$DOTFILES/slinky.psv"
@@ -22,19 +36,38 @@ LEGACY_BACKUP_FILE="$DOTFILES/slinky-v0.psv.bak"
 _absolute_path() (
   path="$1"
   case "$path" in
-    /*)     printf '%s\n' "$path" ;;
-    '~')    printf '%s\n' "$HOME" ;;
-    '~/'*)  printf '%s/%s\n' "$HOME" "${path#\~/}" ;;
-    ./*)    printf '%s/%s\n' "$PWD" "${path#./}" ;;
-    *)      printf '%s/%s\n' "$PWD" "$path" ;;
+    '~')    path=$HOME ;;
+    '~/'*)  path="$HOME/${path#\~/}" ;;
+    /*)     ;;
+    ./*)    path="$PWD/${path#./}" ;;
+    *)      path="$PWD/$path" ;;
   esac
+
+  [ "$path" = / ] && { printf '/\n'; return 0; }
+
+  dir=$(dirname "$path")
+  base=$(basename "$path")
+  dir=$(_canonical_dir "$dir")
+  printf '%s/%s\n' "$dir" "$base"
 )
 
 _home_path() (
-  path="$1"
-  case "$path" in
-    "$HOME"|"$HOME"/*)  printf '~%s\n' "${path#"$HOME"}" ;;
-    *)                  printf '%s\n' "$path" ;;
+  for home in "$HOME" "$HOME_CANONICAL"; do
+    [ -n "$home" ] || continue
+    case "$1" in
+      "$home"|"$home"/*) printf '~%s\n' "${1#"$home"}"; return 0 ;;
+    esac
+  done
+  printf '%s\n' "$1"
+)
+
+# Print the resolved absolute target of a symlink.
+_symlink_target() (
+  link=$1
+  target=$(readlink "$link") || return 1
+  case "$target" in
+    /*) _absolute_path "$target" ;;
+    *)  _absolute_path "$(dirname "$link")/$target" ;;
   esac
 )
 
@@ -58,20 +91,45 @@ _get_mapping_dotfile() (
   printf '%s\n' "${1#*|}"
 )
 
-# Normalize a dotfile path to the form stored in the mappings file: relative to
-# the mappings file location (the dotfiles repo root) with a leading "./".
+# Normalize a repo-relative path to the form stored in the mappings file:
+# relative to the dotfiles repo root with a leading "./". Return failure for
+# absolute paths or paths that escape the repo.
 _normalize_dotfile_path() (
   path="$1"
-  if [ "$path" = "." ]; then
-    printf '.\n'
-    return 0
-  fi
-  while [ "$path" != "${path#./}" ]; do
-    path=${path#./}
+  case "$path" in
+    /*) return 1 ;;
+  esac
+
+  normalized=""
+  rest=$path
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      */*) part=${rest%%/*}; rest=${rest#*/} ;;
+      *)   part=$rest; rest="" ;;
+    esac
+    case "$part" in
+      ''|.) ;;
+      ..)
+        [ -n "$normalized" ] || return 1
+        normalized=${normalized%/*}
+        ;;
+      *) normalized=$normalized/$part ;;
+    esac
   done
-  path=${path%/}
-  printf './%s\n' "$path"
+
+  if [ -z "$normalized" ]; then
+    printf '.\n'
+  else
+    printf './%s\n' "${normalized#/}"
+  fi
 )
+
+# Normalize a user-supplied repo path, reporting invalid input.
+_normalize_repo_path() {
+  _normalize_dotfile_path "$1" && return 0
+  echo "Error: '$1' must be a relative path inside the dotfiles repo" >&2
+  return 1
+}
 
 _check_mappings_format() (
   for file in "$DOTFILES"/slinky-v*.psv; do
@@ -195,12 +253,8 @@ add_dotfile() (
   fi
 
   base=$(basename "$source_path")
-  norm_repo_rel=${repo_rel_path%/}
-  if [ -n "$norm_repo_rel" ]; then
-    dotfile_rel_path=$(_normalize_dotfile_path "$norm_repo_rel/$base")
-  else
-    dotfile_rel_path=$(_normalize_dotfile_path "$base")
-  fi
+  dotfile_rel_path=$(_normalize_repo_path "${repo_rel_path:+$repo_rel_path/}$base") ||
+    return 1
   dotfile_path="$DOTFILES/${dotfile_rel_path#./}"
   mapping_entry="$source_home_path|$dotfile_rel_path"
 
@@ -242,10 +296,12 @@ list_dotfiles() (
     case "$mapping" in ''|'#'*) continue ;;
     esac
     link_path=$(_home_path "$(_get_mapping_link "$mapping")")
-    dotfile_path=$(_normalize_dotfile_path "$(_get_mapping_dotfile "$mapping")")
+    if ! dotfile_path=$(_normalize_dotfile_path "$(_get_mapping_dotfile "$mapping")"); then
+      echo "Warning: skipping invalid mapping: $mapping" >&2
+      continue
+    fi
 
     if [ -n "$filter_path" ]; then
-      filter_path=$(_normalize_dotfile_path "$filter_path")
       case "$dotfile_path" in
         "$filter_path"/*) ;;
         "$filter_path") ;;
@@ -260,8 +316,8 @@ list_dotfiles() (
 move_dotfile() (
   source_path="$1"
   dest_path="$2"
-  source_rel_path=$(_normalize_dotfile_path "$source_path")
-  dest_rel_path=$(_normalize_dotfile_path "$dest_path")
+  source_rel_path=$(_normalize_repo_path "$source_path") || return 1
+  dest_rel_path=$(_normalize_repo_path "$dest_path") || return 1
   source_abs_path="$DOTFILES/${source_rel_path#./}"
   dest_abs_path="$DOTFILES/${dest_rel_path#./}"
 
@@ -338,7 +394,7 @@ move_dotfile() (
 
 drop_dotfile() (
   dotfile_path="$1"
-  dotfile_rel_path=$(_normalize_dotfile_path "$dotfile_path")
+  dotfile_rel_path=$(_normalize_repo_path "$dotfile_path") || return 1
   dotfile_abs_path="$DOTFILES/${dotfile_rel_path#./}"
 
   mapping=$(_find_mapping_by_dotfile "$dotfile_rel_path")
@@ -403,9 +459,16 @@ find_links() (
     return 1
   fi
 
-  found_links=$(find "$search_path" -maxdepth 3 -type l -lname "$DOTFILES*" 2>/dev/null)
+  found_links=$(find "$search_path" -maxdepth 3 -type l 2>/dev/null)
   [ -n "$found_links" ] || return 0
   while read -r found_link; do
+    found_link_dest=$(_symlink_target "$found_link") || continue
+    case "$found_link_dest" in
+      "$DOTFILES"/*) ;;
+      *) continue ;;
+    esac
+
+    found_link_abs=$(_absolute_path "$found_link")
     tracked_dotfile=""
     while IFS= read -r mapping; do
       case "$mapping" in ''|'#'* ) continue ;;
@@ -414,20 +477,16 @@ find_links() (
       link_path=$(_get_mapping_link "$mapping")
       link_abs_path=$(_absolute_path "$link_path")
       dotfile_path=$(_get_mapping_dotfile "$mapping")
-      if [ "$found_link" = "$link_abs_path" ]; then
+      if [ "$found_link_abs" = "$link_abs_path" ]; then
         tracked_dotfile="$dotfile_path"
         break
       fi
     done < "$MAPPINGS_FILE"
 
     if [ -z "$tracked_dotfile" ]; then
-      found_link_dest=$(readlink "$found_link")
-      case "$found_link_dest" in
-        "$DOTFILES"/*)
-          found_link_dest=$(_normalize_dotfile_path "${found_link_dest#"$DOTFILES"/}")
-          ;;
-      esac
-      echo "$(_home_path "$found_link") > $found_link_dest"
+      found_dotfile=$(_normalize_dotfile_path "${found_link_dest#"$DOTFILES"/}") ||
+        found_dotfile=$found_link_dest
+      echo "$(_home_path "$found_link_abs") > $found_dotfile"
     fi
   done << EOF
 $found_links
@@ -442,7 +501,7 @@ import_link() (
     return 1
   fi
 
-  link_dest=$(readlink "$link_path")
+  link_dest=$(_symlink_target "$link_path")
   case "$link_dest" in
     "$DOTFILES"/*)
       dotfile_path=${link_dest#"$DOTFILES"/}
@@ -457,8 +516,11 @@ import_link() (
       ;;
   esac
 
-  dotfile_rel_path=$(_normalize_dotfile_path "$dotfile_path")
   link_home_path=$(_home_path "$link_path")
+  if ! dotfile_rel_path=$(_normalize_dotfile_path "$dotfile_path"); then
+    echo "Cannot import symlink '$link_home_path': its target is outside the dotfiles repo" >&2
+    return 1
+  fi
   if [ -n "$(_find_mapping_by_link "$link_home_path")" ]; then
     echo "Cannot import symlink '$link_home_path': it is already tracked" >&2
     return 1
@@ -473,30 +535,6 @@ import_link() (
   echo "Imported dotfile symlink: $link_home_path > $dotfile_rel_path"
 )
 
-_symlink_target() (
-  link=$1
-  target=$(readlink "$link") || return 1
-  case "$target" in
-    /*) path=$target ;;
-    *)  path=$(dirname "$link")/$target ;;
-  esac
-
-  resolved=""
-  rest=$path
-  while [ -n "$rest" ]; do
-    case "$rest" in
-      */*) part=${rest%%/*}; rest=${rest#*/} ;;
-      *)   part=$rest; rest="" ;;
-    esac
-    case "$part" in
-      ''|.) ;;
-      ..)   resolved=${resolved%/*} ;;
-      *)    resolved=$resolved/$part ;;
-    esac
-  done
-  printf '%s\n' "${resolved:-/}"
-)
-
 install_links() (
   filter_path="$1"
   install_status=0
@@ -504,10 +542,13 @@ install_links() (
     case "$mapping" in ''|'#'* ) continue ;;
     esac
     link_path=$(_get_mapping_link "$mapping")
-    dotfile_path=$(_normalize_dotfile_path "$(_get_mapping_dotfile "$mapping")")
+    if ! dotfile_path=$(_normalize_dotfile_path "$(_get_mapping_dotfile "$mapping")"); then
+      echo "Warning: skipping invalid mapping: $mapping" >&2
+      install_status=1
+      continue
+    fi
 
     if [ -n "$filter_path" ]; then
-      filter_path=$(_normalize_dotfile_path "$filter_path")
       case "$dotfile_path" in
         "$filter_path"/*) ;;
         "$filter_path") ;;
@@ -556,11 +597,7 @@ install_links() (
       continue
     fi
 
-    if [ -L "$link_abs_path" ]; then
-      echo "Created symlink: $(_home_path "$link_abs_path")"
-    else
-      echo "Failed creating symlink: $(_home_path "$link_abs_path") > $dotfile_abs_path"
-    fi
+    echo "Created symlink: $(_home_path "$link_abs_path")"
   done < "$MAPPINGS_FILE"
   return "$install_status"
 )
@@ -627,6 +664,9 @@ _parse_filter() {
     shift
   done
   [ "$path_next" = 0 ] || { help "$_cmd" >&2; exit 1; }
+  if [ -n "$filter_path" ]; then
+    filter_path=$(_normalize_repo_path "$filter_path") || exit 1
+  fi
 }
 
 # Validate DOTFILES and prepare the mappings file for commands that need it.
@@ -655,7 +695,7 @@ case "$1" in
     _cmd_help add "$@"
     repo_rel_path=""
     path_next=0
-    source_count=0
+    has_source=0
     end_options=0
     for arg in "$@"; do
       if [ "$path_next" = 1 ]; then
@@ -665,7 +705,7 @@ case "$1" in
         continue
       fi
       if [ "$end_options" = 1 ]; then
-        source_count=$((source_count + 1))
+        has_source=1
         continue
       fi
       case "$arg" in
@@ -675,11 +715,15 @@ case "$1" in
           path_next=1
           ;;
         -*) help add >&2; exit 1 ;;
-        *) source_count=$((source_count + 1)) ;;
+        *) has_source=1 ;;
       esac
     done
     [ "$path_next" = 0 ] || { help add >&2; exit 1; }
-    [ "$source_count" -gt 0 ] || { help add >&2; exit 1; }
+    [ "$has_source" = 1 ] || { help add >&2; exit 1; }
+
+    if [ -n "$repo_rel_path" ]; then
+      repo_rel_path=$(_normalize_repo_path "$repo_rel_path") || exit 1
+    fi
 
     init_repo
 
